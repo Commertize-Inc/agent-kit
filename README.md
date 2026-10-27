@@ -15,21 +15,27 @@ What this is not: a hosted builder. Commertize runs nothing for you: no runtime,
 
 ## Quick start
 
-The package is not published to npm yet. Until it is, run the CLI from a clone with `node --experimental-strip-types --conditions=source packages/cli/src/bin.ts` in place of `npx @commertize/agent-kit`.
+The kit installs from this repository; `@commertize/agent-kit` is not on the npm registry, so `npx @commertize/agent-kit` does not resolve. Clone, build, and run the CLI (`commertize-agent`) as `node packages/cli/dist/bin.js` from inside the clone:
 
 ```bash
-npx @commertize/agent-kit init data-consumer my-agent
-cd my-agent
+git clone https://github.com/Commertize-Inc/agent-kit.git
+cd agent-kit
+npm install && npm run build
+node packages/cli/dist/bin.js init data-consumer ../my-agent
+cd ../my-agent
+npm install ../agent-kit/packages/cli   # the kit from your clone
 # put your model call in model.ts, then:
-npm install && npm start
+npm start
 ```
 
 Each template is a short loop with one seam, `model.ts`, marked **YOUR MODEL CALL GOES HERE**. Until you wire it, the template refuses to run. Every action it takes is recorded as a CAS v0.1 receipt (Commertize Agent Standard, draft), hash-linked and signed with your agent key. The kit keeps receipts in memory and prints them; where you store them is up to you.
 
 ## Register your agent
 
+From inside the clone:
+
 ```bash
-commertize-agent register --agent-address 0xYOUR_AGENT_ADDRESS
+node packages/cli/dist/bin.js register --agent-address 0xYOUR_AGENT_ADDRESS
 ```
 
 This registers your agent's address under your signed-in Commertize account, reports whether a task mandate can be set, and prints the first open Commertize Work task. Run it again safely: an address already on file is reused.
