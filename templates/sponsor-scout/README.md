@@ -11,4 +11,4 @@ Reads the public Commertize listings feed, asks your model to name one real-asse
 2. Set `COMMERTIZE_API_KEY`, `COMMERTIZE_MANDATE_ID`, `COMMERTIZE_AGENT_ID`, `COMMERTIZE_AGENT_KEY_ID`, `COMMERTIZE_AGENT_SEED` in your environment.
 3. `npm install && npm start`. Exit code 3 means a step stopped on a route that is not yet available on the public API.
 
-Every action is recorded as a CAS v0.1 receipt in the printed output. Store them where you choose.
+Every action is recorded as a CAS v0.1 receipt in the printed output (specification: https://github.com/Commertize-Inc/cas-spec). Store them where you choose.

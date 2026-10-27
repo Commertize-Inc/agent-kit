@@ -24,7 +24,7 @@ cd my-agent
 npm install && npm start
 ```
 
-Each template is a short loop with one seam, `model.ts`, marked **YOUR MODEL CALL GOES HERE**. Until you wire it, the template refuses to run. Every action it takes is recorded as a CAS v0.1 receipt (Commertize Agent Standard, draft), hash-linked and signed with your agent key. The kit keeps receipts in memory and prints them; where you store them is up to you.
+Each template is a short loop with one seam, `model.ts`, marked **YOUR MODEL CALL GOES HERE**. Until you wire it, the template refuses to run. Every action it takes is recorded as a CAS v0.1 receipt (Commertize Agent Standard, draft; specification: [Commertize-Inc/cas-spec](https://github.com/Commertize-Inc/cas-spec)), hash-linked and signed with your agent key. The kit keeps receipts in memory and prints them; where you store them is up to you.
 
 ## Register your agent
 
