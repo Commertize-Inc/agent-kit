@@ -1,0 +1,48 @@
+# CI for the Commertize Agent Kit.
+#
+# Typecheck, the node:test suites (including the CAS conformance test every
+# template must pass) and the wording guard. Hermetic: tests use an in-process
+# fake fetch, no network. No secrets, no deploy, read-only token. Actions pinned
+# by full commit SHA (same pins as Commertize-Inc/mcp-server).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install (frozen lockfile)
+        run: npm ci --ignore-scripts
+
+      - name: Wording guard
+        run: node scripts/check-wording.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

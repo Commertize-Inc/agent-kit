@@ -1,0 +1,31 @@
+{
+	"name": "@commertize/agent-kit",
+	"version": "0.1.0",
+	"description": "Commertize Agent Kit: templates and a CLI for running your own agent against Commertize, on your own framework and keys.",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Commertize-Inc/agent-kit.git",
+		"directory": "packages/cli"
+	},
+	"homepage": "https://github.com/Commertize-Inc/agent-kit#readme",
+	"type": "module",
+	"bin": {
+		"commertize-agent": "dist/bin.js"
+	},
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist", "templates", "README.md", "LICENSE", "NOTICE"],
+	"engines": {
+		"node": ">=22.6"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"prepack": "npm run build && node ../../scripts/bundle-templates.mjs"
+	}
+}
