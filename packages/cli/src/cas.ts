@@ -9,6 +9,9 @@
  * Commertize-Inc/commertize-agents by hand so the kit has no dependencies.
  * The conformance test checks that this hand validator refuses each rule's
  * negative case, so a drift shows up as a failing test.
+ *
+ * The public CAS specification and conformance vectors live at
+ * https://github.com/Commertize-Inc/cas-spec (draft).
  */
 
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
