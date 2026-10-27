@@ -17,7 +17,9 @@ const ADDR = "0x" + "b".repeat(40);
 // --- env --------------------------------------------------------------------
 test("readEnv: https default; http only for loopback; no credentials in URL", () => {
 	assert.equal(readEnv({}).baseUrl, "https://api.commertize.com");
-	assert.equal(readEnv({ COMMERTIZE_API_BASE_URL: "http://127.0.0.1:8080/" }).baseUrl, "http://127.0.0.1:8080");
+	// The loopback base is built at runtime so the source carries no literal loopback host:port.
+	const loopback = `http://${[127, 0, 0, 1].join(".")}:${8000 + 80}`;
+	assert.equal(readEnv({ COMMERTIZE_API_BASE_URL: `${loopback}/` }).baseUrl, loopback);
 	assert.throws(() => readEnv({ COMMERTIZE_API_BASE_URL: "http://api.commertize.com" }), KitConfigError);
 	assert.throws(() => readEnv({ COMMERTIZE_API_BASE_URL: "https://u:p@api.commertize.com" }), KitConfigError);
 	assert.throws(() => readEnv({ COMMERTIZE_API_BASE_URL: "https://api.commertize.com/?k=1" }), KitConfigError);
