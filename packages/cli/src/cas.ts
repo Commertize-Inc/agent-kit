@@ -5,8 +5,10 @@
  * CAS v0.1 receipts for kit templates: build, hash (C-1), sign (C-2),
  * validate (receipt schema + R-1, R-2) and chain (R-3).
  *
- * The validator mirrors spec/cas/schemas/receipt.schema.json from
- * Commertize-Inc/commertize-agents by hand so the kit has no dependencies.
+ * The validator mirrors the CAS v0.1 receipt schema (receipt.schema.json)
+ * by hand so the kit has no dependencies. That schema is not yet published
+ * in Commertize-Inc/cas-spec, which currently carries the mandate and
+ * credential vectors only.
  * The conformance test checks that this hand validator refuses each rule's
  * negative case, so a drift shows up as a failing test.
  *
