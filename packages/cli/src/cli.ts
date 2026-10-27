@@ -5,10 +5,11 @@
 import { parseArgs } from "node:util";
 import { CommertizeClient, readEnv } from "./client.ts";
 import { init, TEMPLATES } from "./init.ts";
+import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
 import { ROUTES, ROUTES_CHECKED_AT } from "./routes.ts";
 
-export const KIT_VERSION = "0.1.0";
+export const KIT_VERSION = "0.2.0";
 
 const USAGE = `commertize-agent ${KIT_VERSION}
 
@@ -17,6 +18,9 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              register your agent's wallet on Commertize and
                                              find the first open Work task
   commertize-agent routes                    every route the kit calls, live or not yet available
+  commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
+                                             MCP client config for a template, and the server
+                                             tools and gates it uses (opens no gate)
 
 Environment (read, never stored): COMMERTIZE_API_BASE_URL, COMMERTIZE_SESSION_TOKEN, COMMERTIZE_API_KEY
 `;
@@ -57,6 +61,21 @@ export async function main(argv: string[], out = console.log, err = console.erro
 						"pending" in r ? `  (${r.pending})` : ""
 					}`
 				);
+			return 0;
+		}
+		if (cmd === "mcp") {
+			const { values, positionals } = parseArgs({
+				args: rest,
+				allowPositionals: true,
+				options: { server: { type: "string" } },
+			});
+			const [name] = positionals;
+			if (!name || !values.server) return err(USAGE), 2;
+			const { config, tools } = mcpClientConfig(name, values.server);
+			out(JSON.stringify(config, null, "\t"));
+			err(`Server tools for ${name} (as of ${MCP_TOOLS_CHECKED_AT.date}). The server lists a gated tool only when its variable is exactly "1"; this config sets none:`);
+			for (const t of tools)
+				err(`  ${t.name.padEnd(22)} ${t.gate ?? "no gate"}${t.availability === "in-review" ? "  (in review on the server, not on its main branch)" : ""}`);
 			return 0;
 		}
 		err(USAGE);

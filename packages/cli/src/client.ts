@@ -105,7 +105,7 @@ export class CommertizeClient {
 		if (route.status !== "live") throw new RouteMissingError(route);
 		const headers: Record<string, string> = {
 			accept: "application/json",
-			"user-agent": "commertize-agent-kit/0.1.0",
+			"user-agent": "commertize-agent-kit/0.2.0",
 		};
 		if (route.auth === "session") {
 			if (!this.env.sessionToken)

@@ -80,7 +80,8 @@ export const ROUTES = {
 		path: "/work/v1/tasks",
 		auth: "none",
 		status: "live",
-		note: "The public Commertize Work board. May be empty.",
+		switchable: true,
+		note: "The public Commertize Work board. May be empty. Answered 404 on api.commertize.com on 2026-10-27 (built, not yet released).",
 	},
 	workSubmit: {
 		id: "workSubmit",

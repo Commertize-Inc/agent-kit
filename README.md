@@ -57,7 +57,7 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 | `POST /agents/v1/pairings` | `register` (headless pairing) | not yet available on the public API |
 | `POST /agents/v1/task-mandates` | `register` | not yet available on the public API |
 | `GET /agents/v1/me` | `register` | not yet available on the public API |
-| `GET /work/v1/tasks` | `register`, register-cleaner, desk-watcher | live; may be empty |
+| `GET /work/v1/tasks` | `register`, register-cleaner, desk-watcher | answered 404 on 2026-10-27 (built, not yet released); may be empty once live |
 | `POST /work/v1/tasks/:taskId/submissions` | register-cleaner | available, answers 501: claims are not open yet |
 | `GET /listings` | sponsor-scout, data-consumer, desk-watcher | live |
 | `GET /partner/listings` | library only | live; needs an issued API key |
@@ -67,6 +67,16 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 | `GET /desk/counts` | desk-watcher | live; empty unless mandates are switched on |
 | `GET /agents/activity` | desk-watcher | live; empty unless mandates are switched on |
 | `GET /desk/brief` | desk-watcher | live |
+
+## Through MCP
+
+A template's reads can also go through the Commertize MCP server ([Commertize-Inc/mcp-server](https://github.com/Commertize-Inc/mcp-server)) from any MCP client. The kit does not bundle or start that server: clone and build it, then print the client config for your template:
+
+```bash
+npx @commertize/agent-kit mcp desk-watcher --server /absolute/path/to/mcp-server/dist/index.js
+```
+
+The config goes to stdout. The server tools the template uses, and the server variable each one sits behind, go to stderr. Every gated tool is off on the server by default, and the printed config sets no gate and no credential. You decide what to open, on your own machine. Tools marked "in review" are not on the server's main branch yet.
 
 ## What a task mandate allows
 
