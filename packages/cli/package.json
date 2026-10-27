@@ -1,6 +1,6 @@
 {
 	"name": "@commertize/agent-kit",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Commertize Agent Kit: templates and a CLI for running your own agent against Commertize, on your own framework and keys.",
 	"license": "Apache-2.0",
 	"repository": {
