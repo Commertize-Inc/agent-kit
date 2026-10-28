@@ -4,6 +4,7 @@
 
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { ApiError, CommertizeClient, KitConfigError, readEnv } from "./client.ts";
+import { AUTH_EXIT, authComplete, authStart, checkRequestId, type AuthStartResult, type CredentialSink } from "./auth.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
@@ -14,7 +15,7 @@ export const KIT_VERSION = "0.2.0";
 /** Every `--json` result carries this schema id. */
 export const JSON_SCHEMA = "commertize.agent-kit.cli.v1";
 
-export const COMMANDS = ["help", "version", "init", "register", "routes", "mcp"] as const;
+export const COMMANDS = ["help", "version", "init", "auth", "register", "routes", "mcp"] as const;
 
 const USAGE = `commertize-agent ${KIT_VERSION}
 
@@ -22,6 +23,11 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent register --agent-address 0x... [--task-class c]... [--allow-host h]
                                              register your agent's wallet on Commertize and
                                              find the first open Work task
+  commertize-agent auth start [--no-wait]    start sign-in: prints the link and a request id, exits
+  commertize-agent auth complete --request <id> [--wait | --no-wait] [--timeout s]
+                                             check (or wait for) that sign-in; exit 0 approved,
+                                             5 pending, 6 denied, 7 expired, 8 timed out
+  commertize-agent register ... --no-wait    with no session: start sign-in instead (exit 5)
   commertize-agent routes                    every route the kit calls, live or not yet available
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
@@ -116,6 +122,18 @@ function errorResult(command: string, e: unknown): Result {
 export interface Deps {
 	/** Builds the API client. Library seam for tests and embedding; not reachable from argv or the environment. */
 	client?: (allowHost: string | undefined, warn: Out) => CommertizeClient;
+	/** Where an approved sign-in's credential goes. Unset: it is not kept (and never printed). */
+	credentialSink?: CredentialSink;
+}
+
+function startResult(command: string, s: AuthStartResult, exit: number): Result {
+	return {
+		command,
+		exit_code: exit,
+		data: s,
+		next_step: `commertize-agent auth complete --request ${s.requestId} --wait --json`,
+		text: [`Open this link to sign in (expires in ${s.expiresIn} s):`, s.signinUrl, `Then run: commertize-agent auth complete --request ${s.requestId} --wait`],
+	};
 }
 
 async function dispatch(cmd: string | undefined, rest: string[], err: Out, deps: Deps): Promise<Result> {
@@ -142,15 +160,72 @@ async function dispatch(cmd: string | undefined, rest: string[], err: Out, deps:
 			text: [`Created ${target}: ${files.join(", ")}\nNext: wire your model in model.ts, then npm install && npm start.`],
 		};
 	}
+	if (cmd === "auth") {
+		const [sub, ...more] = rest;
+		if (sub === "start") {
+			const { values } = parse(more, { "allow-host": { type: "string" }, "no-wait": { type: "boolean" } });
+			return startResult("auth", await authStart(mkClient(values["allow-host"] as string | undefined, err)), AUTH_EXIT.approved);
+		}
+		if (sub === "complete") {
+			const { values } = parse(more, {
+				request: { type: "string" },
+				wait: { type: "boolean" },
+				"no-wait": { type: "boolean" },
+				timeout: { type: "string" },
+				"allow-host": { type: "string" },
+			});
+			const id = values.request as string | undefined;
+			if (!id) throw new UsageError("auth complete needs --request <id>");
+			try {
+				checkRequestId(id);
+			} catch (e) {
+				throw new UsageError((e as Error).message);
+			}
+			if (values.wait && values["no-wait"]) throw new UsageError("--wait and --no-wait together");
+			let timeoutMs: number | undefined;
+			if (values.timeout !== undefined) {
+				const s = Number(values.timeout);
+				if (!Number.isInteger(s) || s < 1 || s > 1800) throw new UsageError("--timeout is whole seconds, 1-1800");
+				timeoutMs = s * 1000;
+			}
+			const r = await authComplete(mkClient(values["allow-host"] as string | undefined, err), id, {
+				wait: values.wait === true,
+				timeoutMs,
+				onCredential: deps.credentialSink,
+			});
+			const next =
+				r.status === "approved"
+					? r.credential === "not_stored"
+						? "Approved, but no credential store is set up, so the credential was not kept. Run: commertize-agent configure --json, then auth start again"
+						: null
+					: r.status === "pending" || r.status === "timeout"
+						? `commertize-agent auth complete --request ${id} --wait --json`
+						: "commertize-agent auth start --json";
+			return {
+				command: "auth",
+				exit_code: AUTH_EXIT[r.status],
+				data: r,
+				next_step: next,
+				text: [`Sign-in ${r.status}${r.credential === "stored" ? ` (credential kept in ${r.where})` : r.credential === "not_stored" ? " (credential NOT kept: no store configured)" : ""}`],
+			};
+		}
+		throw new UsageError("auth needs start or complete");
+	}
 	if (cmd === "register") {
 		const { values } = parse(rest, {
 			"agent-address": { type: "string" },
 			"task-class": { type: "string", multiple: true },
 			"allow-host": { type: "string" },
+			"no-wait": { type: "boolean" },
 		});
 		const addr = values["agent-address"] as string | undefined;
 		if (!addr) throw new UsageError("register needs --agent-address 0x...");
-		const r = await register(mkClient(values["allow-host"] as string | undefined, err), addr, (values["task-class"] as string[] | undefined) ?? []);
+		const client = mkClient(values["allow-host"] as string | undefined, err);
+		if (values["no-wait"] && !client.env.sessionToken) {
+			if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) throw new KitConfigError("--agent-address must be a 0x-prefixed 20-byte address");
+			return startResult("register", await authStart(client, { agentAddress: addr }), AUTH_EXIT.pending);
+		}
+		const r = await register(client, addr, (values["task-class"] as string[] | undefined) ?? []);
 		return {
 			command: cmd,
 			exit_code: 3, // registered, but the mandate step is not available yet

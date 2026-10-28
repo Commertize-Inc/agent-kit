@@ -93,15 +93,22 @@ export interface CallOptions {
 export class CommertizeClient {
 	readonly env: KitEnv;
 	private readonly fetchImpl: Fetch;
+	private readonly routes: Readonly<Record<string, Route>>;
 	// (no TypeScript parameter properties anywhere: the sources run under Node type stripping)
-	constructor(env: KitEnv, fetchImpl: Fetch = fetch) {
+	/**
+	 * `routes` is a library seam (tests, and embedders tracking a newer API).
+	 * The CLI never sets it: no flag or environment variable reaches it.
+	 */
+	constructor(env: KitEnv, fetchImpl: Fetch = fetch, routes: Readonly<Record<string, Route>> = ROUTES) {
 		this.env = env;
 		this.fetchImpl = fetchImpl;
+		this.routes = routes;
 	}
 
 	/** Calls a route from the table. A missing route throws before any network call. */
 	async call<T = unknown>(id: RouteId, opts: CallOptions = {}): Promise<T> {
-		const route: Route = ROUTES[id];
+		const route: Route | undefined = this.routes[id];
+		if (!route) throw new KitConfigError(`route ${id} is not in the routes table`);
 		if (route.status !== "live") throw new RouteMissingError(route);
 		const headers: Record<string, string> = {
 			accept: "application/json",

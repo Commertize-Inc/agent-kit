@@ -63,7 +63,16 @@ export const ROUTES = {
 		auth: "none",
 		status: "missing",
 		pending: "not yet available on the public API",
-		note: "Headless pairing: your agent key asks, you approve in the dashboard.",
+		note: "Headless pairing: your agent key asks, you approve in the dashboard. Answers { requestId, signinUrl, expiresIn }.",
+	},
+	pairingStatus: {
+		id: "pairingStatus",
+		method: "GET",
+		path: "/agents/v1/pairings/:requestId",
+		auth: "none",
+		status: "missing",
+		pending: "not yet available on the public API",
+		note: "State of a pairing request: pending, approved, denied or expired.",
 	},
 	agentMe: {
 		id: "agentMe",
