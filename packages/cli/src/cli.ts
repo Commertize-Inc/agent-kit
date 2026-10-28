@@ -14,7 +14,7 @@ import { EVENT_TYPES, history, listen, matchesFilter, POLL_FLOOR_MS, watchStop, 
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
 import { drain, DrainBusyError, DrainSourceChangedError, DrainUsageError, DRAIN_LIMIT_MAX } from "./drain.ts";
 import { EXIT, handBack, taskFinal, type HandBack, type Reason } from "./handback.ts";
-import { AGENTS_PAGE_MAX, listAgents, mandateShow, NotFoundError, UUID, whoami, type CredentialSource } from "./whoami.ts";
+import { AGENTS_PAGE_MAX, listAgents, mandateShow, NotFoundError, UnexpectedAnswerError, UUID, whoami, type CredentialSource } from "./whoami.ts";
 import { skillCheck } from "./skillcheck.ts";
 import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
@@ -245,6 +245,15 @@ function errorResult(command: string, e: unknown): Result {
 			error: { code: "source_changed", message: e.message },
 			next_step: "Drain with a new --consumer name",
 			hand_back: handBack("drain_source_changed"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof UnexpectedAnswerError)
+		return {
+			command,
+			exit_code: EXIT.error,
+			error: { code: "api", message: e.message },
+			next_step: null,
+			hand_back: handBack("api_error"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	if (e instanceof NotFoundError)

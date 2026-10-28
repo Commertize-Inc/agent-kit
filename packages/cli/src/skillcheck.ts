@@ -10,7 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 
 export const SKILL_MAX_BYTES = 1024 * 1024;
 
@@ -24,6 +24,7 @@ export interface SkillFileCheck {
 export const sha256hex = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
 function readCapped(path: string): Buffer {
+	if (!statSync(path).isFile()) throw new Error("not a regular file"); // a FIFO would block the open forever
 	const fd = openSync(path, "r");
 	try {
 		const st = fstatSync(fd);

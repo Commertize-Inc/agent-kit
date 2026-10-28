@@ -14,7 +14,7 @@
  * All three use GET /mandates/principal/agents (live, session). Nothing here writes.
  */
 
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { CommertizeClient, KitConfigError } from "./client.ts";
 import { validateReceipt } from "./cas.ts";
 
@@ -68,6 +68,14 @@ function rows(p: AgentsPage): AgentRow[] {
 	);
 }
 
+/** A server answer that breaks the route's contract. The command stops; nothing from the answer is passed on. */
+export class UnexpectedAnswerError extends Error {
+	constructor(msg: string) {
+		super(msg);
+		this.name = "UnexpectedAnswerError";
+	}
+}
+
 export class NotFoundError extends Error {
 	readonly what: "agent" | "mandate";
 	constructor(what: "agent" | "mandate", msg: string) {
@@ -88,7 +96,11 @@ export async function listAgents(client: CommertizeClient, o: { limit?: number; 
 	if (o.cursor !== undefined && !UUID.test(o.cursor)) throw new KitConfigError("--cursor is an agent id from a previous page");
 	const p = await client.call<AgentsPage>("principalAgents", { query: { limit: String(limit), ...(o.cursor ? { cursor: o.cursor } : {}) } });
 	const agents = rows(p ?? {});
-	return { agents, next_cursor: typeof p?.nextCursor === "string" ? p.nextCursor : null, kyb: kybView(p ?? {}) };
+	// The cursor goes into a printed next_step command line: anything but null or a UUID is refused, never echoed.
+	const nc = p?.nextCursor;
+	if (nc !== undefined && nc !== null && (typeof nc !== "string" || !UUID.test(nc)))
+		throw new UnexpectedAnswerError("GET /mandates/principal/agents answered a nextCursor that is not an agent id; refusing");
+	return { agents, next_cursor: typeof nc === "string" ? nc : null, kyb: kybView(p ?? {}) };
 }
 
 export async function mandateShow(client: CommertizeClient, mandateId: string) {
@@ -111,6 +123,7 @@ export const RECEIPTS_MAX_BYTES = 64 * 1024 * 1024;
 
 /** Counts CAS receipts in a local NDJSON log: valid ones, and lines that are not valid receipts. */
 export function countReceipts(file: string): { file: string; valid: number; invalid: number } {
+	if (!statSync(file).isFile()) throw new KitConfigError(`${file} is not a regular file`); // a FIFO would block the open forever
 	const fd = openSync(file, "r");
 	let text: string;
 	try {

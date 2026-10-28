@@ -97,3 +97,12 @@ test("the paid-endpoint spec stub exists, says what is built today, and is liste
 	assert.match(help.join("\n"), /reserved/);
 	for (const c of ["whoami", "agents", "mandate"]) assert.ok((COMMANDS as readonly string[]).includes(c), c);
 });
+
+test("skill check: a FIFO --path is drift (exit 15) at once, never opened", async () => {
+	const { spawnSync } = await import("node:child_process");
+	const fifo = join(mkdtempSync(join(tmpdir(), "kit-skill-fifo-")), "SKILL.md");
+	assert.equal(spawnSync("mkfifo", [fifo]).status, 0);
+	const r = await json(["skill", "check", "--path", fifo]);
+	assert.equal(r.code, 15);
+	assert.equal(r.o.data.files[0].problem, "not a regular file");
+});
