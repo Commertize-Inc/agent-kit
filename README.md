@@ -15,10 +15,15 @@ What this is not: a hosted builder. Commertize runs nothing for you: no runtime,
 
 ## Quick start
 
-The package is not published to npm yet. Until it is, run the CLI from a clone with `node --experimental-strip-types --conditions=source packages/cli/src/bin.ts` in place of `npx @commertize/agent-kit`.
+This package is not on the npm registry. Run it from a clone:
+
+```
+git clone https://github.com/Commertize-Inc/agent-kit && cd agent-kit && npm ci
+alias commertize-agent="node --experimental-strip-types --conditions=source $PWD/packages/cli/src/bin.ts"
+```
 
 ```bash
-npx @commertize/agent-kit init data-consumer my-agent
+commertize-agent init data-consumer my-agent
 cd my-agent
 # put your model call in model.ts, then:
 npm install && npm start
@@ -48,22 +53,22 @@ Read at run time, never written to disk, never logged, sent only to the API base
 
 ## Built and live: every route the kit calls
 
-Status as of 2026-10-26. "Live" means the route is available on the public Commertize API. Some live routes can be switched off on a deployment and then answer 404; the kit says so when that happens. A route that is not yet available is never imitated: the step stops, records a blocked receipt saying so, and the command exits with code 3. `commertize-agent routes` prints this table from the code.
+Status as of 2026-10-26. "Live" means the route is available on the public Commertize API. Some live routes can be switched off on a deployment and then answer 404; the kit says so when that happens. A route that is Not open is never imitated: the step stops, records a blocked receipt saying so, and the command exits with code 3. `commertize-agent routes` prints this table from the code.
 
 | Route | Used by | State |
 |---|---|---|
 | `POST /mandates/principal/passports` | `register` | live; may be switched off (404) |
 | `GET /mandates/principal/agents` | `register` (re-run) | live; may be switched off (404) |
-| `POST /agents/v1/pairings` | `register` (headless pairing) | not yet available on the public API |
-| `POST /agents/v1/task-mandates` | `register` | not yet available on the public API |
-| `GET /agents/v1/me` | `register` | not yet available on the public API |
-| `GET /work/v1/tasks` | `register`, register-cleaner, desk-watcher | answered 404 on 2026-10-27 (built, not yet released); may be empty once live |
-| `POST /work/v1/tasks/:taskId/submissions` | register-cleaner | available, answers 501: claims are not open yet |
+| `POST /agents/v1/pairings` | `register` (headless pairing) | Not open |
+| `POST /agents/v1/task-mandates` | `register` | Not open |
+| `GET /agents/v1/me` | `register` | Not open |
+| `GET /work/v1/tasks` | `register`, register-cleaner, desk-watcher | answered 404 on 2026-10-27 (built, not released); may be empty once live |
+| `POST /work/v1/tasks/:taskId/submissions` | register-cleaner | Not open: answers 501 until claims open |
 | `GET /listings` | sponsor-scout, data-consumer, desk-watcher | live |
 | `GET /partner/listings` | library only | live; needs an issued API key |
 | `GET /news` | data-consumer | live |
-| `GET /api-keys/:id/usage` | data-consumer | not yet available on the public API |
-| `POST /agents/submissions` | sponsor-scout | not yet available on the public API |
+| `GET /api-keys/:id/usage` | data-consumer | Not open |
+| `POST /agents/submissions` | sponsor-scout | Not open |
 | `GET /desk/counts` | desk-watcher | live; empty unless mandates are switched on |
 | `GET /agents/activity` | desk-watcher | live; empty unless mandates are switched on |
 | `GET /desk/brief` | desk-watcher | live |
@@ -73,10 +78,10 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 A template's reads can also go through the Commertize MCP server ([Commertize-Inc/mcp-server](https://github.com/Commertize-Inc/mcp-server)) from any MCP client. The kit does not bundle or start that server: clone and build it, then print the client config for your template:
 
 ```bash
-npx @commertize/agent-kit mcp desk-watcher --server /absolute/path/to/mcp-server/dist/index.js
+commertize-agent mcp desk-watcher --server /absolute/path/to/mcp-server/dist/index.js
 ```
 
-The config goes to stdout. The server tools the template uses, and the server variable each one sits behind, go to stderr. Every gated tool is off on the server by default, and the printed config sets no gate and no credential. You decide what to open, on your own machine. Tools marked "in review" are not on the server's main branch yet.
+The config goes to stdout. The server tools the template uses, and the server variable each one sits behind, go to stderr. Every gated tool is off on the server by default, and the printed config sets no gate and no credential. You decide what to open, on your own machine. Tools marked "in review" are not on the server's main branch.
 
 ## What a task mandate allows
 

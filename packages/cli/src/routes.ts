@@ -7,7 +7,7 @@
  * A row is `live` when the route is available on the public Commertize API
  * as of ROUTES_CHECKED_AT.date. Some live routes can be switched off on a
  * deployment and then answer 404 (`switchable`). A row is `missing` when it
- * is not yet available; calling it throws RouteMissingError before any
+ * is Not open; calling it throws RouteMissingError before any
  * network call. The kit never substitutes sample data for a missing route.
  */
 
@@ -21,7 +21,7 @@ export interface Route {
 	status: "live" | "missing";
 	/** A live route that a deployment can switch off (it then answers 404). */
 	switchable?: true;
-	/** For routes that cannot be called yet: the public status. */
+	/** For routes that are Not open: the public status. */
 	pending?: string;
 	note: string;
 }
@@ -53,7 +53,7 @@ export const ROUTES = {
 		path: "/agents/v1/task-mandates",
 		auth: "session",
 		status: "missing",
-		pending: "not yet available on the public API",
+		pending: "Not open",
 		note: "A CAS task-class mandate (read, screen, draft, check, notify).",
 	},
 	pairingStart: {
@@ -62,7 +62,7 @@ export const ROUTES = {
 		path: "/agents/v1/pairings",
 		auth: "none",
 		status: "missing",
-		pending: "not yet available on the public API",
+		pending: "Not open",
 		note: "Headless pairing: your agent key asks, you approve in the dashboard. Answers { requestId, signinUrl, expiresIn }.",
 	},
 	pairingStatus: {
@@ -71,7 +71,7 @@ export const ROUTES = {
 		path: "/agents/v1/pairings/:requestId",
 		auth: "none",
 		status: "missing",
-		pending: "not yet available on the public API",
+		pending: "Not open",
 		note: "State of a pairing request: pending, approved, denied or expired.",
 	},
 	agentMe: {
@@ -80,7 +80,7 @@ export const ROUTES = {
 		path: "/agents/v1/me",
 		auth: "none",
 		status: "missing",
-		pending: "not yet available on the public API",
+		pending: "Not open",
 		note: "What this agent is and which tasks it qualifies for.",
 	},
 	workTasks: {
@@ -90,7 +90,7 @@ export const ROUTES = {
 		auth: "none",
 		status: "live",
 		switchable: true,
-		note: "The public Commertize Work board. May be empty. Answered 404 on api.commertize.com on 2026-10-27 (built, not yet released).",
+		note: "The public Commertize Work board. May be empty. Answered 404 on api.commertize.com on 2026-10-27 (built, not released).",
 	},
 	workSubmit: {
 		id: "workSubmit",
@@ -98,7 +98,7 @@ export const ROUTES = {
 		path: "/work/v1/tasks/:taskId/submissions",
 		auth: "session",
 		status: "missing",
-		pending: "available on the public API but answers 501: claims are not open yet",
+		pending: "Not open: answers 501 until claims open",
 		note: "Submitting work for a task.",
 	},
 	listings: {
@@ -131,7 +131,7 @@ export const ROUTES = {
 		path: "/api-keys/:id/usage",
 		auth: "session",
 		status: "missing",
-		pending: "not yet available on the public API",
+		pending: "Not open",
 		note: "Per-key Data API usage.",
 	},
 	sponsorSubmission: {
@@ -140,7 +140,7 @@ export const ROUTES = {
 		path: "/agents/submissions",
 		auth: "api_key",
 		status: "missing",
-		pending: "not yet available on the public API",
+		pending: "Not open",
 		note: "Filing a candidate asset for sponsor review.",
 	},
 	deskCounts: {
@@ -175,7 +175,7 @@ export class RouteMissingError extends Error {
 	readonly route: Route;
 	constructor(route: Route) {
 		super(
-			`${route.method} ${route.path}: ${route.pending ?? "not yet available on the public API"} ` +
+			`${route.method} ${route.path}: ${route.pending ?? "Not open"} ` +
 				`(status as of ${ROUTES_CHECKED_AT.date}). This kit does not substitute sample data; ` +
 				`the step stops here.`
 		);

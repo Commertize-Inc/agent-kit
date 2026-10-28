@@ -11,6 +11,11 @@ const TEXT = /\.(md|json|ts|mjs|js|py|toml|ya?ml|txt|sh)$/;
 
 const PHRASES = [
 	/coming soon/i,
+	// Present-tense facts only: no future-tense availability wording.
+	/\bnot yet\b/i,
+	/\bsoon\b/i,
+	/\bnot published\b/i,
+	/\byet\b/i,
 	/verified by commertize/i,
 	/commertize[- ]verified/i,
 	/\bcertified\b/i,

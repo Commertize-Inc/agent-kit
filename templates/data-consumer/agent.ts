@@ -26,7 +26,7 @@ export const dataConsumer: Template = {
 		res.output.push(summary);
 		res.receipts.push(await ctx.log.record({ verb: "screen", objectRef: "data-consumer.summary", evidence: summary }));
 
-		// Per-key usage is not yet available on the public API; the step stops and says why.
+		// Per-key usage is Not open; the step stops and says why.
 		await callOrStop(ctx, res, "dataApiUsage", { params: { id: "self" } });
 		return res;
 	},

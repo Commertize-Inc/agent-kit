@@ -6,6 +6,10 @@ import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { ApiError, CommertizeClient, KitConfigError, readEnv } from "./client.ts";
 import { AUTH_EXIT, authComplete, authStart, checkRequestId, type AuthStartResult, type CredentialSink } from "./auth.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { history, listen, POLL_FLOOR_MS, watchStop, type KitEvent } from "./events.ts";
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
 import { init, TEMPLATES } from "./init.ts";
@@ -18,7 +22,7 @@ export const KIT_VERSION = "0.2.0";
 /** Every `--json` result carries this schema id. */
 export const JSON_SCHEMA = "commertize.agent-kit.cli.v1";
 
-export const COMMANDS = ["help", "version", "init", "auth", "register", "events", "job", "serve", "routes", "mcp"] as const;
+export const COMMANDS = ["help", "version", "init", "auth", "register", "events", "job", "serve", "routes", "mcp", "skill"] as const;
 
 const USAGE = `commertize-agent ${KIT_VERSION}
 
@@ -39,10 +43,11 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              that task's events from a file events listen wrote
   commertize-agent serve [--port 8787]       the event stream at http://127.0.0.1:<port>/events
                                              (loopback only, read only, no credentials)
-  commertize-agent routes                    every route the kit calls, live or not yet available
+  commertize-agent routes                    every route the kit calls, live or not open
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
                                              tools and gates it uses (opens no gate)
+  commertize-agent skill print               the operating guide for a coding agent (SKILL.md)
   commertize-agent version | help
 
   --json  on any command: print exactly one JSON object per result on stdout
@@ -181,6 +186,16 @@ function textEvent(e: KitEvent): string {
 	return `${e.ts} ${e.type}${id}${st}${extra}`;
 }
 
+/** Public status words: "Live" and "Not open" (present-tense facts only). */
+export function routeLabel(r: { status: string }): "Live" | "Not open" {
+	return r.status === "live" ? "Live" : "Not open";
+}
+
+/** SKILL.md next to the package root (src/ when run from source, dist/ when installed). */
+function skillPath(): string {
+	return join(dirname(fileURLToPath(import.meta.url)), "..", "SKILL.md");
+}
+
 function startResult(command: string, s: AuthStartResult, exit: number): Result {
 	return {
 		command,
@@ -196,6 +211,18 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 	if (cmd === undefined || cmd === "help") {
 		parse(rest, {});
 		return { command: "help", exit_code: 0, data: { version: KIT_VERSION, commands: [...COMMANDS], templates: [...TEMPLATES] }, next_step: "commertize-agent routes --json", text: [USAGE] };
+	}
+	if (cmd === "skill") {
+		const { positionals } = parse(rest, {}, true);
+		if (positionals.length !== 1 || positionals[0] !== "print") throw new UsageError("skill needs exactly: print");
+		const t = readFileSync(skillPath(), "utf8");
+		return {
+			command: cmd,
+			exit_code: 0,
+			data: { text: t, sha256: createHash("sha256").update(t).digest("hex") },
+			next_step: "commertize-agent routes --json",
+			text: [t.endsWith("\n") ? t.slice(0, -1) : t],
+		};
 	}
 	if (cmd === "version") {
 		parse(rest, {});
@@ -371,9 +398,9 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		const r = await register(client, addr, (values["task-class"] as string[] | undefined) ?? []);
 		return {
 			command: cmd,
-			exit_code: 3, // registered, but the mandate step is not available yet
+			exit_code: 3, // registered; the mandate route is Not open
 			data: r,
-			next_step: "The task mandate route is not on the public API yet; check `commertize-agent routes --json` for taskMandateCreate",
+			next_step: "The task mandate route is Not open; check `commertize-agent routes --json` for taskMandateCreate",
 			text: [
 				[
 					`Wallet: ${r.passport.agentAddress} (${r.passport.reused ? "already registered" : "registered"}, ${r.passport.passportId})`,
@@ -389,14 +416,14 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		return {
 			command: cmd,
 			exit_code: 0,
-			data: { checked_at: ROUTES_CHECKED_AT.date, routes: rows },
+			data: { checked_at: ROUTES_CHECKED_AT.date, routes: rows.map((r) => ({ ...r, label: routeLabel(r) })) },
 			next_step: null,
 			text: [
 				`Route status as of ${ROUTES_CHECKED_AT.date}`,
 				...rows.map(
 					(r) =>
-						`${r.status.padEnd(7)} ${r.method.padEnd(4)} ${r.path}${"switchable" in r ? "  [answers 404 while switched off]" : ""}${
-							"pending" in r ? `  (${r.pending})` : ""
+						`${routeLabel(r).padEnd(8)} ${r.method.padEnd(4)} ${r.path}${"switchable" in r ? "  [answers 404 while switched off]" : ""}${
+							"pending" in r && r.pending !== "Not open" ? `  (${r.pending})` : ""
 						}`
 				),
 			],
