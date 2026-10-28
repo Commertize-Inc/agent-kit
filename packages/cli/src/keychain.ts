@@ -34,8 +34,8 @@ export const KEYCHAIN_SERVICE = "commertize-agent-kit";
 export const SECURITY_BIN = "/usr/bin/security";
 /** Credentials (environment or keychain). */
 export const KEY_NAMES = ["COMMERTIZE_SESSION_TOKEN", "COMMERTIZE_API_KEY"] as const;
-/** Every keychain item this kit may touch: the credentials plus the device signer key (signer.ts). */
-export const KEYCHAIN_NAMES = [...KEY_NAMES, "COMMERTIZE_SIGNER_KEY"] as const;
+/** Every keychain item this kit may touch: the credentials, the device signer key (signer.ts) and the agent key (agentkey.ts). */
+export const KEYCHAIN_NAMES = [...KEY_NAMES, "COMMERTIZE_SIGNER_KEY", "COMMERTIZE_AGENT_KEY"] as const;
 export type KeyName = (typeof KEYCHAIN_NAMES)[number];
 const VALUE = /^[A-Za-z0-9][A-Za-z0-9._~+/=-]{7,4095}$/;
 

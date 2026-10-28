@@ -112,7 +112,7 @@ test("configure: the signer key can be cleared by name and is not listed as a cr
 	await run(["signer", "init"], { kc });
 	const c = await run(["configure"], { kc });
 	assert.deepEqual(Object.keys(c.o.data.stored), ["COMMERTIZE_SESSION_TOKEN", "COMMERTIZE_API_KEY"]);
-	const cl = await run(["configure", "--clear", SIGNER_KEY], { kc });
+	const cl = await run(["configure", "--clear", SIGNER_KEY, "--confirm"], { kc });
 	assert.equal(cl.code, 0);
 	assert.equal(store.has(SIGNER_KEY), false);
 });
@@ -319,12 +319,12 @@ test("agents: malformed rows are left out and counted (data.dropped_rows, whoami
 
 test("configure --clear is three-state: a locked keychain (36) stops, never reports 'was not stored'", async () => {
 	const locked: Runner = (args) => (args[0] === "delete-generic-password" ? { status: 36, stdout: "" } : { status: 44, stdout: "" });
-	const r = await run(["configure", "--clear", SIGNER_KEY], { kc: osKeychain(locked, () => true) });
+	const r = await run(["configure", "--clear", SIGNER_KEY, "--confirm"], { kc: osKeychain(locked, () => true) });
 	assert.equal(r.code, 1);
 	assert.match(r.o.error.message, /did not answer .*exit 36/);
 	assert.doesNotMatch(r.raw, /was not stored/);
 	const absent: Runner = () => ({ status: 44, stdout: "" });
-	const a = await run(["configure", "--clear", SIGNER_KEY], { kc: osKeychain(absent, () => true) });
+	const a = await run(["configure", "--clear", SIGNER_KEY, "--confirm"], { kc: osKeychain(absent, () => true) });
 	assert.equal(a.code, 0);
 	assert.equal(a.o.data.action, `${SIGNER_KEY} was not stored`);
 });
