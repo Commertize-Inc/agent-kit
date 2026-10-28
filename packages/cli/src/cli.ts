@@ -5,6 +5,9 @@
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { ApiError, CommertizeClient, KitConfigError, readEnv } from "./client.ts";
 import { AUTH_EXIT, authComplete, authStart, checkRequestId, type AuthStartResult, type CredentialSink } from "./auth.ts";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { history, listen, POLL_FLOOR_MS, watchStop, type KitEvent } from "./events.ts";
+import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
@@ -15,7 +18,7 @@ export const KIT_VERSION = "0.2.0";
 /** Every `--json` result carries this schema id. */
 export const JSON_SCHEMA = "commertize.agent-kit.cli.v1";
 
-export const COMMANDS = ["help", "version", "init", "auth", "register", "routes", "mcp"] as const;
+export const COMMANDS = ["help", "version", "init", "auth", "register", "events", "job", "serve", "routes", "mcp"] as const;
 
 const USAGE = `commertize-agent ${KIT_VERSION}
 
@@ -28,6 +31,14 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              check (or wait for) that sign-in; exit 0 approved,
                                              5 pending, 6 denied, 7 expired, 8 timed out
   commertize-agent register ... --no-wait    with no session: start sign-in instead (exit 5)
+  commertize-agent events listen [--interval s] [--once]
+                                             Work board changes as they happen (polls, floor 15 s);
+                                             with --json, one event object per line (NDJSON)
+  commertize-agent job watch <taskId>        one task's changes, until it reaches a final state
+  commertize-agent job history <taskId> --from <file.ndjson>
+                                             that task's events from a file events listen wrote
+  commertize-agent serve [--port 8787]       the event stream at http://127.0.0.1:<port>/events
+                                             (loopback only, read only, no credentials)
   commertize-agent routes                    every route the kit calls, live or not yet available
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
@@ -124,6 +135,50 @@ export interface Deps {
 	client?: (allowHost: string | undefined, warn: Out) => CommertizeClient;
 	/** Where an approved sign-in's credential goes. Unset: it is not kept (and never printed). */
 	credentialSink?: CredentialSink;
+	/** Stream seams (tests): sleep, a poll cap, and the HTTP listener for serve. */
+	sleep?: (ms: number) => Promise<void>;
+	maxPolls?: number;
+	listenServer?: ListenServer;
+	/** false: do not install SIGINT/SIGTERM handlers (tests). */
+	signals?: boolean;
+	/** Set by main from --json; streams print NDJSON when true. */
+	json?: boolean;
+}
+
+export type ListenServer = (
+	handler: (req: IncomingMessage, res: ServerResponse) => void,
+	port: number,
+	host: string
+) => Promise<{ close: () => Promise<void> }>;
+
+const defaultListen: ListenServer = (handler, port, host) =>
+	new Promise((resolve, reject) => {
+		const s = createServer(handler);
+		s.once("error", reject);
+		s.listen({ port, host, exclusive: true }, () =>
+			resolve({ close: () => new Promise<void>((r) => (s.closeAllConnections(), s.close(() => r()))) })
+		);
+	});
+
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		if (signal.aborted) return resolve();
+		const t = setTimeout(done, ms);
+		function done() {
+			clearTimeout(t);
+			signal.removeEventListener("abort", done);
+			resolve();
+		}
+		signal.addEventListener("abort", done, { once: true });
+	});
+}
+
+function textEvent(e: KitEvent): string {
+	const d = e.data;
+	const id = typeof d.task_id === "string" ? ` ${d.task_id}` : "";
+	const st = typeof d.status === "string" ? ` ${d.previous_status ? `${d.previous_status} -> ` : ""}${d.status}` : "";
+	const extra = e.type === "work.board.snapshot" ? ` ${d.count} task(s)` : e.type === "stream.error" ? ` ${d.message}` : "";
+	return `${e.ts} ${e.type}${id}${st}${extra}`;
 }
 
 function startResult(command: string, s: AuthStartResult, exit: number): Result {
@@ -136,7 +191,7 @@ function startResult(command: string, s: AuthStartResult, exit: number): Result 
 	};
 }
 
-async function dispatch(cmd: string | undefined, rest: string[], err: Out, deps: Deps): Promise<Result> {
+async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: Out, deps: Deps): Promise<Result> {
 	const mkClient = deps.client ?? ((allowHost: string | undefined, warn: Out) => new CommertizeClient(readEnv(process.env, allowHost, warn)));
 	if (cmd === undefined || cmd === "help") {
 		parse(rest, {});
@@ -210,6 +265,94 @@ async function dispatch(cmd: string | undefined, rest: string[], err: Out, deps:
 			};
 		}
 		throw new UsageError("auth needs start or complete");
+	}
+	if (cmd === "events" || cmd === "job" || cmd === "serve") {
+		const sub = cmd === "serve" ? "serve" : rest[0];
+		const more = cmd === "serve" ? rest : rest.slice(1);
+		if (cmd === "job" && sub === "history") {
+			const { values, positionals } = parse(more, { from: { type: "string" } }, true);
+			const [taskId] = positionals;
+			if (!taskId || !values.from) throw new UsageError("job history needs <taskId> --from <events.ndjson>");
+			const h = history(values.from as string, taskId);
+			return {
+				command: "job",
+				exit_code: 0,
+				data: { task_id: taskId, events: h.events, skipped_lines: h.skipped },
+				next_step: h.events.length ? null : `No events for ${taskId} in that file; record some with: commertize-agent events listen --json >> events.ndjson`,
+				text: h.events.map(textEvent).concat(h.skipped ? [`(${h.skipped} line(s) were not kit events and were skipped)`] : []),
+			};
+		}
+		const isListen = cmd === "events" && sub === "listen";
+		const isWatch = cmd === "job" && sub === "watch";
+		if (!isListen && !isWatch && cmd !== "serve") throw new UsageError(`${cmd} needs ${cmd === "events" ? "listen" : "watch or history"}`);
+		const { values, positionals } = parse(
+			more,
+			{
+				interval: { type: "string" },
+				once: { type: "boolean" },
+				"allow-host": { type: "string" },
+				...(cmd === "serve" ? { port: { type: "string" } } : {}),
+			},
+			isWatch
+		);
+		const taskId = isWatch ? positionals[0] : undefined;
+		if (isWatch && !taskId) throw new UsageError("job watch needs <taskId>");
+		let intervalMs: number | undefined;
+		if (values.interval !== undefined) {
+			const s = Number(values.interval);
+			if (!Number.isInteger(s) || s < POLL_FLOOR_MS / 1000 || s > 3600) throw new UsageError(`--interval is whole seconds, ${POLL_FLOOR_MS / 1000}-3600`);
+			intervalMs = s * 1000;
+		}
+		let port = 0;
+		if (cmd === "serve") {
+			port = Number(values.port ?? "8787");
+			if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new UsageError("--port is 1024-65535");
+		}
+		const client = mkClient(values["allow-host"] as string | undefined, err);
+		const ac = new AbortController();
+		const onSig = () => ac.abort();
+		if (deps.signals !== false) {
+			process.once("SIGINT", onSig);
+			process.once("SIGTERM", onSig);
+		}
+		const hub = new EventHub();
+		let server: { close: () => Promise<void> } | undefined;
+		try {
+			if (cmd === "serve") {
+				const listenFn = deps.listenServer ?? defaultListen;
+				server = await listenFn(makeHandler(hub, port, () => ({ port })), port, SERVE_HOST);
+				err(`commertize-agent: serving events on http://${SERVE_HOST}:${port}/events (loopback only)`);
+			}
+			const emit = (e: KitEvent) => {
+				if (cmd === "serve") hub.publish(e);
+				else if (deps.json) out(JSON.stringify(e));
+				else out(textEvent(e));
+			};
+			const o = await listen({
+				client,
+				emit,
+				intervalMs,
+				taskId,
+				stopWhen: taskId ? watchStop(taskId) : undefined,
+				maxPolls: values.once ? 1 : deps.maxPolls,
+				sleep: deps.sleep ? deps.sleep : (ms) => abortableSleep(ms, ac.signal),
+				signal: ac.signal,
+			});
+			const command = cmd === "serve" ? "serve" : cmd;
+			if (o.reason === "route_missing")
+				return { command, exit_code: 4, data: o, error: { code: "route_missing", message: o.message ?? "" }, next_step: "commertize-agent routes --json" };
+			return {
+				command,
+				exit_code: 0,
+				data: o,
+				next_step: isWatch && o.reason === "stopped" ? `commertize-agent job history ${taskId} --from <file you recorded>` : null,
+			};
+		} finally {
+			process.removeListener("SIGINT", onSig);
+			process.removeListener("SIGTERM", onSig);
+			hub.closeAll();
+			if (server) await server.close();
+		}
 	}
 	if (cmd === "register") {
 		const { values } = parse(rest, {
@@ -307,7 +450,7 @@ export async function main(argv: string[], out: Out = console.log, err: Out = co
 	const [cmd, ...rest] = args;
 	let r: Result;
 	try {
-		r = await dispatch(cmd, rest, err, deps);
+		r = await dispatch(cmd, rest, out, err, { ...deps, json });
 	} catch (e) {
 		r = errorResult(cmd ?? "help", e);
 	}
