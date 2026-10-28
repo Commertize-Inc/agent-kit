@@ -81,13 +81,21 @@ test("handBack: takes only a known reason; prototype keys and unknown codes thro
 const ESCALATING = /configure\s+--(session-token|api-key)-stdin|--allow-host|\bregister\b|--clear/;
 
 test("every refusal carries a hand_back with the expected reason; no next_step or hand_back names a command that widens access", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "kit-hb-"));
+	const skill = join(dir, "SKILL.md");
+	writeFileSync(skill, "old guide\n");
 	const noSession = api({}, { baseUrl: "https://api.commertize.com" } as never);
 	const cases: [string[], Parameters<typeof main>[3], number, Reason][] = [
 		[["nope"], {}, 2, "usage"],
 		[["events", "drain"], {}, 2, "usage"],
 		[["serve"], {}, 4, "serve_not_open"],
-		[["register", "--agent-address", "0x" + "4".repeat(40)], { client: noSession }, 1, "session_missing"],
-		[["register", "--agent-address", "0x" + "4".repeat(40)], { client: api({}) }, 1, "api_error"],
+		[["whoami"], { client: noSession }, 1, "session_missing"],
+		[["agents"], { client: noSession }, 1, "session_missing"],
+		[["whoami"], { client: api({}) }, 1, "api_error"],
+		[["mandate", "show", "00000000-0000-4000-8000-000000000000"], { client: api({ "GET /mandates/principal/agents": { body: { nextCursor: null, agents: [] } } }) }, 16, "mandate_not_found"],
+		[["whoami", "--agent", "0x" + "1".repeat(40)], { client: api({ "GET /mandates/principal/agents": { body: { nextCursor: null, agents: [] } } }) }, 16, "agent_not_found"],
+		[["skill", "check", "--path", skill], {}, 15, "skill_drift"],
+		[["skill", "check", "--path", join(dir, "missing.md")], {}, 15, "skill_drift"],
 		[["auth", "complete", "--request", "req_12345678", "--no-wait"], { client: api({ "GET /agents/v1/pairings/req_12345678": { body: { status: "pending" } } }) }, 5, "signin_pending"],
 		[["auth", "complete", "--request", "req_12345678", "--no-wait"], { client: api({ "GET /agents/v1/pairings/req_12345678": { body: { status: "denied" } } }) }, 6, "signin_denied"],
 		[["auth", "complete", "--request", "req_12345678", "--no-wait"], { client: api({ "GET /agents/v1/pairings/req_12345678": { body: { status: "expired" } } }) }, 7, "signin_expired"],
@@ -114,7 +122,7 @@ test("every refusal carries a hand_back with the expected reason; no next_step o
 });
 
 test("a missing session hands the agent to the principal's sign-in page, not to a credential command", async () => {
-	const { o } = await json(["register", "--agent-address", "0x" + "4".repeat(40)], { client: api({}, { baseUrl: "https://api.commertize.com" } as never) });
+	const { o } = await json(["whoami"], { client: api({}, { baseUrl: "https://api.commertize.com" } as never) });
 	assert.equal(o.hand_back.by, "principal");
 	assert.equal(o.hand_back.url, PRINCIPAL_APP + "/");
 	assert.doesNotMatch(o.next_step, /configure/);

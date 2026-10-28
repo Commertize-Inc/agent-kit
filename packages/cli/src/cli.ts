@@ -14,6 +14,8 @@ import { EVENT_TYPES, history, listen, matchesFilter, POLL_FLOOR_MS, watchStop, 
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
 import { drain, DrainBusyError, DrainSourceChangedError, DrainUsageError, DRAIN_LIMIT_MAX } from "./drain.ts";
 import { EXIT, handBack, taskFinal, type HandBack, type Reason } from "./handback.ts";
+import { AGENTS_PAGE_MAX, listAgents, mandateShow, NotFoundError, UnexpectedAnswerError, UUID, whoami, type CredentialSource } from "./whoami.ts";
+import { skillCheck } from "./skillcheck.ts";
 import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
@@ -35,6 +37,9 @@ export const COMMANDS = [
 	"init",
 	"auth",
 	"register",
+	"whoami",
+	"agents",
+	"mandate",
 	"events",
 	"job",
 	"serve",
@@ -55,6 +60,12 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              check (or wait for) that sign-in; exit 0 approved,
                                              5 pending, 6 denied, 7 expired, 8 timed out
   commertize-agent register ... --no-wait    with no session: start sign-in instead (exit 5)
+  commertize-agent whoami [--agent 0x...] [--receipts <file.ndjson>]
+                                             one read: your company check, your agent and its
+                                             mandates, which credentials are present, receipts
+  commertize-agent agents [--limit n] [--cursor id]
+                                             the agents registered under your account
+  commertize-agent mandate show <mandateId>  one of your mandates (read only)
   commertize-agent events listen [--interval s] [--once] [filters]
                                              Work board changes as they happen (polls, floor 15 s);
                                              with --json, one event object per line (NDJSON)
@@ -80,6 +91,8 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              keep your credentials in the OS keychain (macOS);
                                              values are read from stdin only, never printed
   commertize-agent skill print               the operating guide for a coding agent (SKILL.md)
+  commertize-agent skill check --path <file> is that installed copy this release's guide?
+                                             (exit 15 when any copy differs or is missing)
   commertize-agent version | help
 
   --json  on any command: print exactly one JSON object per result on stdout
@@ -155,6 +168,13 @@ function filterFrom(values: Values): EventFilter | undefined {
 	return Object.keys(f).length ? f : undefined;
 }
 
+/** Where each credential comes from: the environment wins, then the keychain. Values are never read here. */
+function credentialSources(kc: Keychain | undefined): { session_token: CredentialSource; api_key: CredentialSource } {
+	const src = (n: KeyName): CredentialSource =>
+		process.env[n]?.trim() ? "environment" : kc && kc.available() && kc.has(n) ? "keychain" : "absent";
+	return { session_token: src("COMMERTIZE_SESSION_TOKEN"), api_key: src("COMMERTIZE_API_KEY") };
+}
+
 /** Removes every `--json` (anywhere before a bare `--`) and reports whether one was present. */
 export function takeJsonFlag(argv: string[]): { json: boolean; rest: string[] } {
 	const rest: string[] = [];
@@ -225,6 +245,24 @@ function errorResult(command: string, e: unknown): Result {
 			error: { code: "source_changed", message: e.message },
 			next_step: "Drain with a new --consumer name",
 			hand_back: handBack("drain_source_changed"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof UnexpectedAnswerError)
+		return {
+			command,
+			exit_code: EXIT.error,
+			error: { code: "api", message: e.message },
+			next_step: null,
+			hand_back: handBack("api_error"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof NotFoundError)
+		return {
+			command,
+			exit_code: EXIT.not_found,
+			error: { code: "not_found", message: e.message },
+			next_step: e.what === "mandate" ? "commertize-agent whoami --json" : "commertize-agent agents --json",
+			hand_back: handBack(e.what === "mandate" ? "mandate_not_found" : "agent_not_found"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	const m = (e as Error)?.message ?? String(e);
@@ -393,8 +431,24 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		return { command: "help", exit_code: 0, data: { version: KIT_VERSION, commands: [...COMMANDS], templates: [...TEMPLATES] }, next_step: "commertize-agent routes --json", text: [USAGE] };
 	}
 	if (cmd === "skill") {
-		const { positionals } = parse(rest, {}, true);
-		if (positionals.length !== 1 || positionals[0] !== "print") throw new UsageError("skill needs exactly: print");
+		const { values, positionals } = parse(rest, { path: { type: "string", multiple: true } }, true);
+		if (positionals.length === 1 && positionals[0] === "check") {
+			const paths = (values.path as string[] | undefined) ?? [];
+			if (!paths.length) throw new UsageError("skill check needs --path <installed SKILL.md> (repeatable)");
+			const r = skillCheck(readFileSync(skillPath()), paths);
+			const drifted = r.files.filter((f) => !f.upToDate);
+			return {
+				command: cmd,
+				exit_code: r.upToDate ? EXIT.ok : EXIT.skill_drift,
+				data: { version: KIT_VERSION, skillHash: r.skillHash, upToDate: r.upToDate, files: r.files },
+				...(r.upToDate ? {} : { error: { code: "drift" as const, message: `${drifted.length} installed cop${drifted.length === 1 ? "y differs" : "ies differ"} from this release's guide` } }),
+				next_step: r.upToDate ? null : "Replace each listed file with the output of: commertize-agent skill print",
+				hand_back: r.upToDate ? null : handBack("skill_drift"),
+				text: r.files.map((f) => `${f.upToDate ? "current" : "DRIFT  "} ${textSafe(f.path)}${f.problem ? ` (${textSafe(f.problem)})` : ""}`),
+			};
+		}
+		if (values.path !== undefined) throw new UsageError("--path goes with skill check");
+		if (positionals.length !== 1 || positionals[0] !== "print") throw new UsageError("skill needs exactly: print, or check --path <file>");
 		const t = readFileSync(skillPath(), "utf8");
 		return {
 			command: cmd,
@@ -662,6 +716,65 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 					`Work: ${r.taskNote}`,
 				].join("\n"),
 			],
+		};
+	}
+	if (cmd === "whoami") {
+		const { values } = parse(rest, { agent: { type: "string" }, receipts: { type: "string" }, "allow-host": { type: "string" } });
+		const client = mkClient(values["allow-host"] as string | undefined, err);
+		const w = await whoami(client, {
+			agentAddress: values.agent as string | undefined,
+			receiptsFile: values.receipts as string | undefined,
+			credentials: credentialSources(kc),
+		});
+		const a = w.agent;
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: w,
+			next_step: a ? null : w.agents_count ? "Several agents: pass --agent 0x... to pick yours, or run: commertize-agent agents --json" : null,
+			text: [
+				`Company check: ${w.principal.kyb.label ?? "no label"}${w.principal.kyb.as_of ? ` (as of ${textSafe(w.principal.kyb.as_of)})` : ""}`,
+				a ? `Agent: ${textSafe(a.agentAddress)} (${textSafe(a.passportId)}), KYA ${textSafe(a.kyaStatus)}` : `Agents under this account: ${w.agents_count}${w.agents_truncated ? "+" : ""}`,
+				`Mandates: ${w.mandates.length}`,
+				"Payees: Not open",
+				"Spend to date: Not open",
+				"valid" in w.receipts ? `Receipts: ${w.receipts.valid} valid, ${w.receipts.invalid} not valid` : "Receipts: not counted (pass --receipts <file>)",
+				`Session token: ${w.credentials.session_token}; API key: ${w.credentials.api_key}`,
+			],
+		};
+	}
+	if (cmd === "agents") {
+		const { values } = parse(rest, { limit: { type: "string" }, cursor: { type: "string" }, "allow-host": { type: "string" } });
+		let limit: number | undefined;
+		if (values.limit !== undefined) {
+			limit = Number(values.limit);
+			if (!Number.isInteger(limit) || limit < 1 || limit > AGENTS_PAGE_MAX) throw new UsageError(`--limit is 1-${AGENTS_PAGE_MAX}`);
+		}
+		if (values.cursor !== undefined && !UUID.test(values.cursor as string)) throw new UsageError("--cursor is an agent id from a previous page");
+		const client = mkClient(values["allow-host"] as string | undefined, err);
+		const r = await listAgents(client, { limit, cursor: values.cursor as string | undefined });
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: r,
+			next_step: r.next_cursor ? `commertize-agent agents --cursor ${r.next_cursor} --json` : null,
+			text: r.agents.length
+				? r.agents.map((x) => `${textSafe(x.agentAddress)}  ${textSafe(x.passportId)}  KYA ${textSafe(x.kyaStatus)}  mandates ${x.mandates.length}`)
+				: ["No agents under this account."],
+		};
+	}
+	if (cmd === "mandate") {
+		const { values, positionals } = parse(rest, { "allow-host": { type: "string" } }, true);
+		if (positionals.length !== 2 || positionals[0] !== "show") throw new UsageError("mandate needs exactly: show <mandateId>");
+		if (!UUID.test(positionals[1]!)) throw new UsageError("mandate id is a UUID");
+		const client = mkClient(values["allow-host"] as string | undefined, err);
+		const r = await mandateShow(client, positionals[1]!);
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: r,
+			next_step: null,
+			text: [JSON.stringify({ mandate: r.mandate, agent: r.agent }, (_k, v) => (typeof v === "string" ? textSafe(v) : v), "\t")],
 		};
 	}
 	if (cmd === "routes") {
