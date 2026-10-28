@@ -118,6 +118,8 @@ export function osKeychain(run: Runner = defaultRunner, ok: () => boolean = () =
 		},
 		set(name, value) {
 			checkName(name);
+			// set() replaces an existing item (-U): only credentials may be replaced. Key items are create-only (add()).
+			if (!(KEY_NAMES as readonly string[]).includes(name)) throw new KitConfigError(`${name} is a key item: it is created once and never replaced; nothing stored`);
 			checkValue(value);
 			need();
 			// -U updates an existing item. The value is on stdin, inside a single -i command line.
@@ -139,7 +141,8 @@ export function osKeychain(run: Runner = defaultRunner, ok: () => boolean = () =
 		clear(name) {
 			checkName(name);
 			need();
-			return run(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name]).status === 0;
+			// Three-state, like lookups: 0 cleared, 44 not stored, anything else (locked keychain) stops.
+			return found(run(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name]).status, name);
 		},
 	};
 }
