@@ -8,7 +8,7 @@
 		"node": ">=22.6"
 	},
 	"scripts": {
-		"test": "node --conditions=source --experimental-strip-types --test packages/cli/test/*.test.ts",
+		"test": "node --conditions=source --experimental-strip-types --test --test-timeout=60000 packages/cli/test/*.test.ts",
 		"typecheck": "tsc -p packages/cli/tsconfig.json --noEmit && tsc -p tsconfig.templates.json",
 		"build": "npm run build --workspace @commertize/agent-kit",
 		"check:wording": "node scripts/check-wording.mjs"

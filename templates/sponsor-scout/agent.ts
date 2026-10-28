@@ -37,7 +37,7 @@ export const sponsorScout: Template = {
 		res.receipts.push(await ctx.log.record({ verb: "draft", objectRef: "sponsor-scout.draft", evidence: draft }));
 
 		// Submitting an asset application is a human step, and its route is not on
-		// main yet, so this stops here and says why.
+		// main, so this stops here and says why.
 		await callOrStop(ctx, res, "sponsorSubmission", { body: { draft } });
 		return res;
 	},

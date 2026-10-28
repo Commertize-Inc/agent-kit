@@ -23,7 +23,7 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 /**
  * Registers your agent's wallet under your own account, reports why the task
- * mandate cannot be set yet, and finds the first open, unexpired Work task
+ * mandate cannot be set (route Not open), and finds the first open, unexpired Work task
  * (optionally only of the classes you name). Re-running is safe: an address
  * already registered is reused, never registered twice.
  */
@@ -55,7 +55,7 @@ export async function register(
 		passport = { passportId: hit.passportId, agentAddress: hit.agentAddress, reused: true };
 	}
 
-	// 2. Mandate. The task-mandate route is not yet available. Never fall back to the investment mandate route.
+	// 2. Mandate. The task-mandate route is Not open. Never fall back to the investment mandate route.
 	const mandate = { set: false as const, reason: new RouteMissingError(ROUTES.taskMandateCreate).message };
 
 	// 3. First open Work task.

@@ -4,7 +4,7 @@ Reads the public Work board and listings plus your own Commertize Desk (counts, 
 
 | Step | Route | Status (2026-10-26) |
 |---|---|---|
-| Work board | `GET /work/v1/tasks` | answered 404 on 2026-10-27 (built, not yet released); may be empty once live |
+| Work board | `GET /work/v1/tasks` | answered 404 on 2026-10-27 (built, not released); may be empty once live |
 | Listings | `GET /listings` | live |
 | Desk counts | `GET /desk/counts` (your session) | live; empty unless mandates are switched on |
 | Your agents' activity | `GET /agents/activity` (your session) | live; empty unless mandates are switched on |

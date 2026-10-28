@@ -20,7 +20,7 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"files": ["dist", "templates", "README.md", "LICENSE", "NOTICE"],
+	"files": ["dist", "templates", "SKILL.md", "README.md", "LICENSE", "NOTICE"],
 	"engines": {
 		"node": ">=22.6"
 	},

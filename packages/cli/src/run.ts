@@ -12,7 +12,7 @@ import type { ModelSeam, Template, TemplateResult } from "./kit.ts";
  *  COMMERTIZE_MANDATE_ID, COMMERTIZE_AGENT_ID, COMMERTIZE_AGENT_KEY_ID  your own CAS ids
  *  COMMERTIZE_AGENT_SEED  raw 32-byte ed25519 seed, base64url (or pass your own Signer via runTemplate)
  *
- * Exit code: 0 done, 3 done but a step stopped on a route not yet available.
+ * Exit code: 0 done, 3 done but a step stopped on a route that is Not open.
  */
 export async function runOnce(
 	template: Template,

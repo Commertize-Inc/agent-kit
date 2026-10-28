@@ -4,7 +4,7 @@ Data upkeep. Reads the public Commertize Work board, takes the first open task, 
 
 | Step | Route | Status (2026-10-26) |
 |---|---|---|
-| Read the Work board | `GET /work/v1/tasks` | answered 404 on 2026-10-27 (built, not yet released); may be empty once live |
+| Read the Work board | `GET /work/v1/tasks` | answered 404 on 2026-10-27 (built, not released); may be empty once live |
 | Submit the report | `POST /work/v1/tasks/:taskId/submissions` | available, but answers 501 while claims are not open; the step stops with a blocked receipt |
 
 1. Put your model call in `model.ts`.
