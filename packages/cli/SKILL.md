@@ -138,6 +138,23 @@ is local and says nothing about KYA status. Everything else here is read only.
 `wallet balance` holds no key and signs nothing. `whoami` reports payees and spend to date as Not open; do not
 estimate them. A mandate is changed only by the person, in their dashboard.
 
+## Mandates and the device signer
+
+```
+commertize-agent mandate request --json
+commertize-agent mandate revoke <mandateId> --dry-run --json
+commertize-agent signer status --json
+```
+
+- You never write or sign a mandate. `mandate request` and
+  `mandate request-change` exit 5 with `hand_back.url`: show it to the person
+  and wait; they create or change and sign the mandate there.
+- `mandate revoke <id>` only narrows what you may do. Run it with
+  `--dry-run` first, and with `--confirm` only when the person asked for it.
+  Trust the status it reads back, not the route's ok.
+- `signer init` keeps a device key in the OS keychain; never print or copy
+  it. `signer link` is Not open (exit 4).
+
 ## Templates
 
 ```

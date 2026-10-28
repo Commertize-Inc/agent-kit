@@ -173,3 +173,35 @@ commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH]
   balance read, uses the pinned USDC contract for the network, and reports
   `raw` (integer base units), `decimals` and `formatted` (built with integer
   arithmetic). It holds no key and signs nothing.
+
+## Mandates and the device signer
+
+```
+commertize-agent mandate request --json            # exit 5: the person creates and signs it
+commertize-agent mandate request-change --json     # exit 5: the person changes and signs it
+commertize-agent mandate revoke <mandateId> --dry-run --json
+commertize-agent mandate revoke <mandateId> --confirm --json
+commertize-agent signer init --json
+commertize-agent signer status --json
+commertize-agent signer link --json                # exit 4: Not open
+```
+
+- The kit never writes, changes or signs a mandate. `mandate request` and
+  `mandate request-change` send nothing: they exit 5 with a hand-back to the
+  person's dashboard (`/mandates/new` or `/mandates`), where they create or
+  change the mandate and sign it themselves. Then check with `whoami`.
+- `mandate revoke` ends one of the person's mandates (POST
+  /mandates/principal/:mid/revoke). Revoking only narrows what an agent may
+  do. It needs `--confirm`; `--dry-run` reads the mandate and sends nothing.
+  The route answers ok even when nothing changed, so the kit reads the
+  mandate back and reports the status it reads: if the mandate still reads
+  as live, the command fails (exit 1) and claims nothing. A mandate that had
+  already ended is reported as such and nothing is sent.
+- `signer init` creates a P-256 device key and keeps the private half in the
+  OS keychain (macOS; it is never written to a file and never printed). It
+  never replaces a stored key: remove one with
+  `commertize-agent configure --clear COMMERTIZE_SIGNER_KEY`. The key is
+  exportable software key material, not a hardware key, and any process
+  running as you can read it. It never signs a payment or a mandate.
+- `signer link` (binding the device key to your agent) needs the pairing
+  routes, which are Not open: it exits 4 before any network call.
