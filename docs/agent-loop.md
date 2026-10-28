@@ -27,6 +27,7 @@ Branch on the exit code, never on wording. One table for every command:
 | 12 | `job watch`: the task was cancelled |
 | 13 | `job watch`: the task was closed |
 | 14 | `job watch`: the task left the board |
+| 17-20 | reserved (mandate refused, state unreadable, frozen, upstream unavailable); no command returns them in this release |
 | 130 | stopped by a signal (Ctrl-C) |
 
 ## hand_back

@@ -173,6 +173,11 @@ test("exit codes: one table, no value used twice", () => {
 		{ ok: EXIT.ok, usage: EXIT.usage, not_open: EXIT.not_open, pending: EXIT.pending, busy: EXIT.busy, drift: EXIT.skill_drift, not_found: EXIT.not_found },
 		{ ok: 0, usage: 2, not_open: 4, pending: 5, busy: 9, drift: 15, not_found: 16 }
 	);
+	// reserved now so later commands cannot take these numbers
+	assert.deepEqual(
+		{ a: EXIT.mandate_refused, b: EXIT.state_unreadable, c: EXIT.frozen, d: EXIT.upstream_unavailable },
+		{ a: 17, b: 18, c: 19, d: 20 }
+	);
 });
 
 test("listen: the outcome names the final state a watch stopped on", async () => {
