@@ -21,8 +21,8 @@
  * `hand_back` (see handback.ts).
  */
 
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { ApiError, CommertizeClient } from "./client.ts";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { ApiError, CommertizeClient, KitConfigError } from "./client.ts";
 import { RouteMissingError } from "./routes.ts";
 import { handBack, TASK_FINAL, taskFinal, type HandBack } from "./handback.ts";
 
@@ -266,6 +266,7 @@ export const HISTORY_MAX_BYTES = 64 * 1024 * 1024;
  * are counted, never guessed at. Read-only.
  */
 export function history(file: string, taskId: string): { events: KitEvent[]; skipped: number } {
+	if (!statSync(file).isFile()) throw new KitConfigError(`${file} is not a regular file`); // a FIFO would block the open forever
 	const fd = openSync(file, "r");
 	let text: string;
 	try {

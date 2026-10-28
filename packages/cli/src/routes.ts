@@ -47,6 +47,15 @@ export const ROUTES = {
 		switchable: true,
 		note: "Lists the agents registered under your own account and their status.",
 	},
+	kyaChecks: {
+		id: "kyaChecks",
+		method: "GET",
+		path: "/kya/passports/:pid/checks",
+		auth: "session",
+		status: "live",
+		switchable: true,
+		note: "The KYA check record of one of your own agents (check id, result, policy version, date). Read only.",
+	},
 	taskMandateCreate: {
 		id: "taskMandateCreate",
 		method: "POST",

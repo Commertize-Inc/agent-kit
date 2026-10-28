@@ -272,3 +272,13 @@ test("serve: /events is NDJSON, replays recent events, fans out, caps clients", 
 	a.emit("close");
 	assert.equal(hub.size, SERVE_MAX_CLIENTS - 1);
 });
+
+test("job history: a FIFO --from is refused at once, never opened", async () => {
+	const { spawnSync } = await import("node:child_process");
+	const fifo = join(mkdtempSync(join(tmpdir(), "kit-hist-fifo-")), "e.ndjson");
+	assert.equal(spawnSync("mkfifo", [fifo]).status, 0);
+	assert.throws(() => history(fifo, "a"), /not a regular file/);
+	const out: string[] = [];
+	assert.equal(await main(["job", "history", "a", "--from", fifo, "--json"], (l) => out.push(l), () => {}), 1);
+	assert.equal(JSON.parse(out[0]!).hand_back.reason, "config");
+});

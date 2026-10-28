@@ -16,6 +16,18 @@ import { drain, DrainBusyError, DrainSourceChangedError, DrainUsageError, DRAIN_
 import { EXIT, handBack, taskFinal, type HandBack, type Reason } from "./handback.ts";
 import { AGENTS_PAGE_MAX, listAgents, mandateShow, NotFoundError, UnexpectedAnswerError, UUID, whoami, type CredentialSource } from "./whoami.ts";
 import { skillCheck } from "./skillcheck.ts";
+import { findAgent, identityShow } from "./identity.ts";
+import { checkProfileName, readActiveAgent, writeActiveAgent, type ActiveAgent } from "./profile.ts";
+import { balance, isNetwork, NETWORKS, TOKENS, type Token } from "./chain.ts";
+import { homedir } from "node:os";
+
+/** No agent was named and no profile has one set. */
+class NoActiveAgentError extends Error {
+	constructor() {
+		super("no agent named and no active agent set for this profile");
+		this.name = "NoActiveAgentError";
+	}
+}
 import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
@@ -40,6 +52,8 @@ export const COMMANDS = [
 	"whoami",
 	"agents",
 	"mandate",
+	"identity",
+	"wallet",
 	"events",
 	"job",
 	"serve",
@@ -65,7 +79,15 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              mandates, which credentials are present, receipts
   commertize-agent agents [--limit n] [--cursor id]
                                              the agents registered under your account
+  commertize-agent agents --use <passportId|0x...> [--profile name] [--dry-run]
+                                             make one of your active agents the one later
+                                             commands act as (kept in ~/.commertize, no secret)
   commertize-agent mandate show <mandateId>  one of your mandates (read only)
+  commertize-agent identity show [--agent 0x...|passportId] [--profile name]
+                                             that agent's passport and its KYA check record
+  commertize-agent wallet address [--agent 0x...] [--profile name]
+  commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH] [--agent 0x...]
+                                             read-only balance on Base (no key, no signing)
   commertize-agent events listen [--interval s] [--once] [filters]
                                              Work board changes as they happen (polls, floor 15 s);
                                              with --json, one event object per line (NDJSON)
@@ -247,6 +269,15 @@ function errorResult(command: string, e: unknown): Result {
 			hand_back: handBack("drain_source_changed"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
+	if (e instanceof NoActiveAgentError)
+		return {
+			command,
+			exit_code: EXIT.not_found,
+			error: { code: "not_found", message: e.message },
+			next_step: "Pass --agent 0x..., or pick one: commertize-agent agents --json, then commertize-agent agents --use <passportId> --json",
+			hand_back: handBack("no_active_agent"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
 	if (e instanceof UnexpectedAnswerError)
 		return {
 			command,
@@ -283,6 +314,10 @@ export interface Deps {
 	listenServer?: ListenServer;
 	/** false: do not install SIGINT/SIGTERM handlers (tests). */
 	signals?: boolean;
+	/** Home directory for ~/.commertize (tests). Not reachable from argv or the environment. */
+	home?: string;
+	/** fetch for the public Base RPC reads of `wallet balance` (tests). */
+	rpcFetch?: typeof fetch;
 	/** Set by main from --json; streams print NDJSON when true. */
 	json?: boolean;
 }
@@ -383,6 +418,16 @@ function startResult(command: string, s: AuthStartResult, exit: number): Result 
 async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: Out, deps: Deps): Promise<Result> {
 	const mkClient = deps.client ?? ((allowHost: string | undefined, warn: Out) => clientFromEnv(allowHost, warn, deps.keychain));
 	const kc = deps.keychain;
+	const home = deps.home ?? homedir();
+	const profileName = (values: Values): string => {
+		const p = (values.profile as string | undefined) ?? "default";
+		try {
+			return checkProfileName(p);
+		} catch (e) {
+			throw new UsageError((e as Error).message);
+		}
+	};
+	const activeAgent = (values: Values): ActiveAgent | null => readActiveAgent(home, profileName(values));
 	const sink: CredentialSink | undefined =
 		deps.credentialSink ??
 		(kc && kc.available()
@@ -719,10 +764,11 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		};
 	}
 	if (cmd === "whoami") {
-		const { values } = parse(rest, { agent: { type: "string" }, receipts: { type: "string" }, "allow-host": { type: "string" } });
+		const { values } = parse(rest, { agent: { type: "string" }, receipts: { type: "string" }, profile: { type: "string" }, "allow-host": { type: "string" } });
+		const active = activeAgent(values);
 		const client = mkClient(values["allow-host"] as string | undefined, err);
 		const w = await whoami(client, {
-			agentAddress: values.agent as string | undefined,
+			agentAddress: (values.agent as string | undefined) ?? active?.agentAddress,
 			receiptsFile: values.receipts as string | undefined,
 			credentials: credentialSources(kc),
 		});
@@ -744,7 +790,34 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		};
 	}
 	if (cmd === "agents") {
-		const { values } = parse(rest, { limit: { type: "string" }, cursor: { type: "string" }, "allow-host": { type: "string" } });
+		const { values } = parse(rest, {
+			limit: { type: "string" },
+			cursor: { type: "string" },
+			use: { type: "string" },
+			profile: { type: "string" },
+			"dry-run": { type: "boolean" },
+			"allow-host": { type: "string" },
+		});
+		if (values.use !== undefined) {
+			if (values.limit !== undefined || values.cursor !== undefined) throw new UsageError("--use takes no --limit or --cursor");
+			const ref = values.use as string;
+			if (!/^0x[0-9a-fA-F]{40}$/.test(ref) && !UUID.test(ref)) throw new UsageError("--use takes an agent's 0x address or passport id");
+			const profile = profileName(values);
+			const a = await findAgent(mkClient(values["allow-host"] as string | undefined, err), ref);
+			// Only an active agent can be made the one later commands act as.
+			if (a.kyaStatus !== "active") throw new NotFoundError("agent", `${ref} is under your account but its KYA status is ${a.kyaStatus}, not active`);
+			const chosen = { passportId: a.passportId, agentAddress: a.agentAddress };
+			const dry = values["dry-run"] === true;
+			const w = dry ? null : writeActiveAgent(home, profile, chosen);
+			return {
+				command: cmd,
+				exit_code: EXIT.ok,
+				data: { profile, active: w?.value ?? chosen, written: !dry, path: w?.path ?? null },
+				next_step: dry ? `commertize-agent agents --use ${a.passportId} --json` : "commertize-agent whoami --json",
+				text: [`${dry ? "Would set" : "Set"} profile ${profile} to agent ${textSafe(a.agentAddress)} (${textSafe(a.passportId)})`],
+			};
+		}
+		if (values["dry-run"] !== undefined || values.profile !== undefined) throw new UsageError("--dry-run and --profile go with --use");
 		let limit: number | undefined;
 		if (values.limit !== undefined) {
 			limit = Number(values.limit);
@@ -775,6 +848,61 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			data: r,
 			next_step: null,
 			text: [JSON.stringify({ mandate: r.mandate, agent: r.agent }, (_k, v) => (typeof v === "string" ? textSafe(v) : v), "\t")],
+		};
+	}
+	if (cmd === "identity") {
+		const { values, positionals } = parse(rest, { agent: { type: "string" }, profile: { type: "string" }, "allow-host": { type: "string" } }, true);
+		if (positionals.length !== 1 || positionals[0] !== "show") throw new UsageError("identity needs exactly: show");
+		const ref = (values.agent as string | undefined) ?? activeAgent(values)?.passportId;
+		if (!ref) throw new NoActiveAgentError();
+		const r = await identityShow(mkClient(values["allow-host"] as string | undefined, err), ref);
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: r,
+			next_step: null,
+			text: [
+				`Agent ${textSafe(r.passport.agentAddress)} (${textSafe(r.passport.passportId)}), KYA ${textSafe(r.passport.kyaStatus)}`,
+				r.checks ? `KYA checks: ${r.checks.length}` : `KYA checks: ${r.checks_note}`,
+				...(r.checks ?? []).map(
+					(c) => `  ${textSafe(c.result)}  ${textSafe(c.checkId ?? "(no check id)")}  ${textSafe(c.checkedAt ?? "(no date)")}  policy ${textSafe(c.policyVersion ?? "(none)")}`
+				),
+			],
+		};
+	}
+	if (cmd === "wallet") {
+		const { values, positionals } = parse(
+			rest,
+			{ agent: { type: "string" }, profile: { type: "string" }, network: { type: "string" }, token: { type: "string" } },
+			true
+		);
+		const sub = positionals[0];
+		if (positionals.length !== 1 || (sub !== "address" && sub !== "balance")) throw new UsageError("wallet needs exactly: address or balance");
+		if (sub === "address" && (values.network !== undefined || values.token !== undefined)) throw new UsageError("--network and --token go with wallet balance");
+		const agent = values.agent as string | undefined;
+		if (agent !== undefined && !/^0x[0-9a-fA-F]{40}$/.test(agent)) throw new UsageError("--agent is a 0x address");
+		const active = agent ? null : activeAgent(values);
+		const address = agent ?? active?.agentAddress;
+		if (!address) throw new NoActiveAgentError();
+		if (sub === "address")
+			return {
+				command: cmd,
+				exit_code: EXIT.ok,
+				data: { address, source: agent ? "flag" : "profile", passportId: active?.passportId ?? null },
+				next_step: null,
+				text: [address],
+			};
+		const network = (values.network as string | undefined) ?? "base";
+		if (!isNetwork(network)) throw new UsageError(`--network is one of: ${Object.keys(NETWORKS).join(", ")}`);
+		const token = ((values.token as string | undefined) ?? "USDC").toUpperCase();
+		if (!(TOKENS as readonly string[]).includes(token)) throw new UsageError(`--token is one of: ${TOKENS.join(", ")}`);
+		const b = await balance({ network, token: token as Token, address, fetch: deps.rpcFetch });
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: b,
+			next_step: null,
+			text: [`${b.formatted} ${b.token} on ${b.network} (${textSafe(b.address)})`],
 		};
 	}
 	if (cmd === "routes") {
