@@ -24,7 +24,10 @@ It ships inside the npm package and prints with `commertize-agent skill print`.
    - 5 sign-in pending, 6 sign-in denied, 7 sign-in expired, 8 wait timed out
 4. Never print, paste, echo or log a session token or an API key. Never put
    one on a command line. The CLI reads `COMMERTIZE_SESSION_TOKEN` and
-   `COMMERTIZE_API_KEY` from the environment. It never prints them.
+   `COMMERTIZE_API_KEY` from the environment, or from the OS keychain after
+   `commertize-agent configure` (macOS; the value is piped on stdin, e.g.
+   `... | commertize-agent configure --api-key-stdin --json`). It never
+   prints them. A sign-in approved by `auth complete` is kept there too.
 5. Do not invent data. If a route is missing, the CLI says so (exit 4) and
    stops. Report that to the person; do not substitute sample output.
 6. Do not pass `--allow-host` unless the person names that exact host. The

@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { history, listen, POLL_FLOOR_MS, watchStop, type KitEvent } from "./events.ts";
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
+import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
@@ -22,7 +23,7 @@ export const KIT_VERSION = "0.2.0";
 /** Every `--json` result carries this schema id. */
 export const JSON_SCHEMA = "commertize.agent-kit.cli.v1";
 
-export const COMMANDS = ["help", "version", "init", "auth", "register", "events", "job", "serve", "routes", "mcp", "skill"] as const;
+export const COMMANDS = ["help", "version", "init", "auth", "register", "events", "job", "serve", "routes", "mcp", "skill", "configure"] as const;
 
 const USAGE = `commertize-agent ${KIT_VERSION}
 
@@ -47,7 +48,10 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
                                              tools and gates it uses (opens no gate)
-  commertize-agent skill print               the operating guide for a coding agent (SKILL.md)
+  commertize-agent configure [--session-token-stdin | --api-key-stdin | --clear NAME]
+                                             keep your credentials in the OS keychain (macOS);
+                                             values are read from stdin only, never printed
+  commertize-agent skill print             the operating guide for a coding agent (SKILL.md)
   commertize-agent version | help
 
   --json  on any command: print exactly one JSON object per result on stdout
@@ -140,6 +144,9 @@ export interface Deps {
 	client?: (allowHost: string | undefined, warn: Out) => CommertizeClient;
 	/** Where an approved sign-in's credential goes. Unset: it is not kept (and never printed). */
 	credentialSink?: CredentialSink;
+	/** The OS keychain. Only bin.ts wires the real one; the library and tests default to none. */
+	keychain?: Keychain;
+	readStdin?: () => Promise<string>;
 	/** Stream seams (tests): sleep, a poll cap, and the HTTP listener for serve. */
 	sleep?: (ms: number) => Promise<void>;
 	maxPolls?: number;
@@ -191,6 +198,27 @@ export function routeLabel(r: { status: string }): "Live" | "Not open" {
 	return r.status === "live" ? "Live" : "Not open";
 }
 
+/** Environment first; the keychain fills only a credential the environment does not set. */
+export function clientFromEnv(allowHost: string | undefined, warn: Out, kc?: Keychain, fetchImpl?: typeof fetch): CommertizeClient {
+	const env = readEnv(process.env, allowHost, warn);
+	if (kc && kc.available()) {
+		if (!env.sessionToken) env.sessionToken = kc.get("COMMERTIZE_SESSION_TOKEN");
+		if (!env.apiKey) env.apiKey = kc.get("COMMERTIZE_API_KEY");
+	}
+	return new CommertizeClient(env, fetchImpl);
+}
+
+const STDIN_MAX = 16 * 1024;
+async function readAllStdin(): Promise<string> {
+	if (process.stdin.isTTY) throw new KitConfigError("pipe the credential on stdin (it is never read from argv)");
+	let s = "";
+	for await (const c of process.stdin) {
+		s += c;
+		if (s.length > STDIN_MAX) throw new KitConfigError("stdin too large for a credential; nothing stored");
+	}
+	return s;
+}
+
 /** SKILL.md next to the package root (src/ when run from source, dist/ when installed). */
 function skillPath(): string {
 	return join(dirname(fileURLToPath(import.meta.url)), "..", "SKILL.md");
@@ -207,7 +235,51 @@ function startResult(command: string, s: AuthStartResult, exit: number): Result 
 }
 
 async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: Out, deps: Deps): Promise<Result> {
-	const mkClient = deps.client ?? ((allowHost: string | undefined, warn: Out) => new CommertizeClient(readEnv(process.env, allowHost, warn)));
+	const mkClient = deps.client ?? ((allowHost: string | undefined, warn: Out) => clientFromEnv(allowHost, warn, deps.keychain));
+	const kc = deps.keychain;
+	const sink: CredentialSink | undefined =
+		deps.credentialSink ??
+		(kc && kc.available()
+			? async (tok) => (kc.set("COMMERTIZE_SESSION_TOKEN", tok), { stored: true, where: `OS keychain (${KEYCHAIN_SERVICE})` })
+			: undefined);
+	if (cmd === "configure") {
+		const { values } = parse(rest, {
+			"session-token-stdin": { type: "boolean" },
+			"api-key-stdin": { type: "boolean" },
+			clear: { type: "string" },
+		});
+		const modes = [values["session-token-stdin"], values["api-key-stdin"], values.clear !== undefined].filter(Boolean).length;
+		if (modes > 1) throw new UsageError("configure takes one of --session-token-stdin, --api-key-stdin, --clear NAME");
+		const envNext = "Use the environment instead: export COMMERTIZE_SESSION_TOKEN / COMMERTIZE_API_KEY in your own shell";
+		if (!kc || !kc.available()) {
+			if (modes === 0)
+				return { command: cmd, exit_code: 0, data: { keychain_available: false, stored: {} }, next_step: envNext, text: ["No supported OS keychain here (macOS only). " + envNext] };
+			return { command: cmd, exit_code: 1, error: { code: "config", message: "no supported OS keychain here (macOS only); nothing stored" }, next_step: envNext, textErr: ["commertize-agent: no supported OS keychain here; nothing stored"] };
+		}
+		let action: string | null = null;
+		if (values.clear !== undefined) {
+			const n = checkName(values.clear as string);
+			action = kc.clear(n) ? `cleared ${n}` : `${n} was not stored`;
+		} else if (values["session-token-stdin"] || values["api-key-stdin"]) {
+			const n: KeyName = values["api-key-stdin"] ? "COMMERTIZE_API_KEY" : "COMMERTIZE_SESSION_TOKEN";
+			const read = deps.readStdin ?? readAllStdin;
+			const v = (await read()).trim();
+			if (!v) throw new KitConfigError(`nothing on stdin for ${n}; nothing stored`);
+			kc.set(n, v);
+			action = `stored ${n}`;
+		}
+		const stored = Object.fromEntries(KEY_NAMES.map((n) => [n, kc.has(n)]));
+		return {
+			command: cmd,
+			exit_code: 0,
+			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, action },
+			next_step: stored.COMMERTIZE_SESSION_TOKEN || stored.COMMERTIZE_API_KEY ? "commertize-agent routes --json" : "commertize-agent auth start --json",
+			text: [
+				...(action ? [`configure: ${action}`] : []),
+				...KEY_NAMES.map((n) => `${n.padEnd(26)} ${stored[n] ? "stored in the OS keychain" : "not stored"}`),
+			],
+		};
+	}
 	if (cmd === undefined || cmd === "help") {
 		parse(rest, {});
 		return { command: "help", exit_code: 0, data: { version: KIT_VERSION, commands: [...COMMANDS], templates: [...TEMPLATES] }, next_step: "commertize-agent routes --json", text: [USAGE] };
@@ -273,7 +345,7 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			const r = await authComplete(mkClient(values["allow-host"] as string | undefined, err), id, {
 				wait: values.wait === true,
 				timeoutMs,
-				onCredential: deps.credentialSink,
+				onCredential: sink,
 			});
 			const next =
 				r.status === "approved"

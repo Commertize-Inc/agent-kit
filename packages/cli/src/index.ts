@@ -7,5 +7,6 @@ export * from "./cas.ts";
 export * from "./kit.ts";
 export * from "./mcp.ts";
 export * from "./auth.ts";
+export * from "./keychain.ts";
 export { runOnce } from "./run.ts";
 export { canonicalize, CanonicalizationError } from "./canonical.ts";
