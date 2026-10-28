@@ -286,6 +286,15 @@ COMMERTIZE_RECEIPT_SIGNER=agent-key  (when running a template)
   stops at its next signature or write. It is checked at run start (both
   modes), before the keychain is read, before every signature and before
   every write call.
+- **What it gates.** The kill file gates signing and template runs,
+  including every write a template sends. It does not gate the CLI's
+  own commands that send a write: `register` (registration and pairing
+  setup) still sends its write with the kill file present, and
+  `mandate revoke` is left ungated on purpose, because revoking is itself
+  a stop and must always work.
+- **Upgrading.** Existing ed25519 template users: after this release a
+  run stops with exit 19 until the person runs
+  `commertize-agent receipt enable-signing --confirm` once on that machine.
 - **The kill file is a cooperative stop.** It stops this kit; it cannot
   stop other code running as you. The real stop for an agent is on the
   server side: freeze its credential or account, or revoke its mandate.
