@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -343,4 +343,29 @@ test("test-sign with no active agent warns that receipts cannot verify until the
 	const code = await main(["receipt", "test-sign", "--json"], (l) => out.push(l), (l) => errs.push(l), { keychain: memKeychain(keys[1]!).kc, home: home(), signals: false });
 	assert.equal(code, 0);
 	assert.ok(errs.some((l) => /no active agent.*cannot verify until/.test(l)), errs.join("\n"));
+});
+
+test("runMain (template main.ts): kill file -> exit 19 with the hand-back text, not an uncaught exit 1; other errors propagate", async () => {
+	const { runMain } = await import("../src/run.ts");
+	const t = { name: "t", run: async () => ({ receipts: [], stopped: [], output: [] }) } as unknown as Parameters<typeof runMain>[0];
+	const h = home();
+	disable(h);
+	const errs: string[] = [];
+	const prev = process.exitCode;
+	assert.equal(await runMain(t, async () => "", ed25519Env, { home: h, errOut: (l) => errs.push(l) }), null);
+	assert.equal(process.exitCode, 19);
+	process.exitCode = prev;
+	assert.match(errs.join("\n"), /receipt enable-signing --confirm/);
+	await assert.rejects(() => runMain(t, async () => "", { ...ed25519Env, COMMERTIZE_RECEIPT_SIGNER: "raw-key" }, { home: home() }), /ed25519.*agent-key/);
+});
+
+test("every template main.ts enters through runMain, so a stopped run exits 19", () => {
+	const root = fileURLToPath(new URL("../../../templates/", import.meta.url));
+	const dirs = readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+	assert.ok(dirs.length >= 4);
+	for (const d of dirs) {
+		const src = readFileSync(join(root, d, "main.ts"), "utf8");
+		assert.match(src, /await runMain\(/, d);
+		assert.doesNotMatch(src, /runOnce/, d);
+	}
 });

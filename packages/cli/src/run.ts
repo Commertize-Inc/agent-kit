@@ -4,7 +4,7 @@
 import { CommertizeClient, KitConfigError, readEnv, type CallOptions } from "./client.ts";
 import { ReceiptLog, ed25519Signer } from "./cas.ts";
 import type { ModelSeam, Template, TemplateResult } from "./kit.ts";
-import { agentKeyReceiptLog, assertNotDisabled, ensureDefaultDisabled, guardSigner } from "./receiptsigner.ts";
+import { agentKeyReceiptLog, assertNotDisabled, DisabledError, ensureDefaultDisabled, guardSigner } from "./receiptsigner.ts";
 import { osKeychain, type Keychain } from "./keychain.ts";
 import { ROUTES, type Route, type RouteId } from "./routes.ts";
 import { homedir } from "node:os";
@@ -27,6 +27,27 @@ export class KillSwitchClient extends CommertizeClient {
 		const route = this.#routes[id];
 		if (!route || route.method !== "GET") assertNotDisabled(this.#home);
 		return super.call<T>(id, opts);
+	}
+}
+
+/**
+ * Entry point for a template's main.ts: runOnce, with the CLI's exit codes. While signing is off
+ * (the kill file), it prints the hand-back text and exits 19, as `receipt test-sign` does; any other
+ * error propagates (exit 1).
+ */
+export async function runMain(
+	template: Template,
+	model: ModelSeam,
+	env: Record<string, string | undefined> = process.env,
+	seams: { home?: string; keychain?: Keychain; client?: CommertizeClient; errOut?: (line: string) => void } = {}
+): Promise<TemplateResult | null> {
+	try {
+		return await runOnce(template, model, env, undefined, seams);
+	} catch (e) {
+		if (!(e instanceof DisabledError)) throw e;
+		(seams.errOut ?? ((l: string) => console.error(l)))(`commertize-agent: ${e.message}`);
+		process.exitCode = 19;
+		return null;
 	}
 }
 
