@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Commertize, Inc.
-// K-1 item 5: the loopback stream is events serve; serve is a reserved slot.
+// K-1 item 4: skill check (drift between an installed guide and this release's guide).
+// K-1 item 5: `serve` renamed to `events serve`; `serve` is a reserved slot that refuses.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -9,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CommertizeClient } from "../src/index.ts";
+import { skillCheck } from "../src/skillcheck.ts";
 import { COMMANDS, KIT_VERSION, main } from "../src/cli.ts";
 
 const PKG = fileURLToPath(new URL("..", import.meta.url));
@@ -22,6 +24,39 @@ async function json(argv: string[], deps: Parameters<typeof main>[3] = {}) {
 	const code = await main([...argv, "--json"], (l) => out.push(l), (l) => err.push(l), { signals: false, ...deps });
 	return { code, o: JSON.parse(out.at(-1)!), err };
 }
+
+test("skill check: an exact copy is current (exit 0); one changed byte is drift (exit 15)", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "kit-skill-"));
+	const same = join(dir, "same.md");
+	const changed = join(dir, "changed.md");
+	writeFileSync(same, GUIDE);
+	writeFileSync(changed, Buffer.concat([GUIDE, Buffer.from(" ")]));
+	const ok = await json(["skill", "check", "--path", same]);
+	assert.equal(ok.code, 0);
+	assert.equal(ok.o.data.upToDate, true);
+	assert.equal(ok.o.data.skillHash, sha(GUIDE));
+	assert.equal(ok.o.data.version, KIT_VERSION);
+	assert.equal(ok.o.hand_back, null);
+	const bad = await json(["skill", "check", "--path", same, "--path", changed]);
+	assert.equal(bad.code, 15);
+	assert.equal(bad.o.data.upToDate, false);
+	assert.deepEqual(bad.o.data.files.map((f: { upToDate: boolean }) => f.upToDate), [true, false]);
+	assert.equal(bad.o.hand_back.reason, "skill_drift");
+	assert.match(bad.o.next_step, /skill print/);
+});
+
+test("skill check fails closed: missing, a directory, or an oversized file is drift; no --path is a usage error", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "kit-skill2-"));
+	const big = join(dir, "big.md");
+	writeFileSync(big, Buffer.alloc(1024 * 1024 + 1, 0x61));
+	const r = skillCheck(GUIDE, [join(dir, "nope.md"), dir, big]);
+	assert.equal(r.upToDate, false);
+	assert.deepEqual(r.files.map((f) => [f.upToDate, f.sha256]), [[false, null], [false, null], [false, null]]);
+	assert.equal(r.files[0]!.problem, "missing");
+	assert.equal(skillCheck(GUIDE, []).upToDate, false, "no files is never 'up to date'");
+	assert.equal((await json(["skill", "check"])).code, 2);
+	assert.equal((await json(["skill", "print", "--path", "x"])).code, 2);
+});
 
 test("events serve: binds 127.0.0.1 at the given port (the stream that used to be `serve`)", async () => {
 	const seen: { port: number; host: string }[] = [];
@@ -60,4 +95,5 @@ test("the paid-endpoint spec stub exists, says what is built today, and is liste
 	await main(["help"], (l) => help.push(l), () => {});
 	assert.match(help.join("\n"), /events serve \[--port 8787\]/);
 	assert.match(help.join("\n"), /reserved/);
+	for (const c of ["whoami", "agents", "mandate"]) assert.ok((COMMANDS as readonly string[]).includes(c), c);
 });

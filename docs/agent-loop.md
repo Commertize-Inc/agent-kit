@@ -28,6 +28,8 @@ Branch on the exit code, never on wording. One table for every command:
 | 12 | `job watch`: the task was cancelled |
 | 13 | `job watch`: the task was closed |
 | 14 | `job watch`: the task left the board |
+| 15 | `skill check`: an installed guide differs from this release's, or is missing |
+| 16 | not found: no such mandate or agent under your account |
 | 130 | stopped by a signal (Ctrl-C) |
 
 ## hand_back
@@ -96,3 +98,25 @@ acknowledged for that consumer, so use one consumer name per filter set. If
 the file is truncated or replaced, the drain refuses (exit 1,
 `drain_source_changed`) instead of guessing; start a new consumer name.
 
+## whoami, agents, mandate show
+
+- `whoami [--agent 0x...] [--receipts file.ndjson]`: one read. Your company
+  check (`label` is "KYB verified" or "Reviewed by Commertize" only when the
+  API serves that state with a date, otherwise none), your agent and its
+  mandates, which credentials are present (environment, keychain or absent,
+  never the value), and the valid receipts in a local log you name. Payees
+  and spend to date have no public route and say "Not open".
+- `agents [--limit n] [--cursor id]`: the agents under your account, a page
+  at a time.
+- `mandate show <mandateId>`: one mandate, read only. Changing a mandate is
+  the principal's step, in the dashboard.
+
+## skill check
+
+```
+commertize-agent skill check --path ./SKILL.md --json
+```
+
+Compares each installed copy of the operating guide with the guide shipped
+in this release (SHA-256 of the exact bytes). Exit 15 if any copy differs or
+is missing; replace it with the output of `commertize-agent skill print`.

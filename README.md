@@ -58,7 +58,7 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 | Route | Used by | State |
 |---|---|---|
 | `POST /mandates/principal/passports` | `register` | live; may be switched off (404) |
-| `GET /mandates/principal/agents` | `register` (re-run) | live; may be switched off (404) |
+| `GET /mandates/principal/agents` | `register` (re-run), `whoami`, `agents`, `mandate show` | live; may be switched off (404) |
 | `POST /agents/v1/pairings` | `register` (headless pairing) | Not open |
 | `POST /agents/v1/task-mandates` | `register` | Not open |
 | `GET /agents/v1/me` | `register` | Not open |
@@ -75,7 +75,7 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 
 ## From an agent loop
 
-Exit codes, the `hand_back` on every refusal, `availableTools` on every event line, event filters and `events drain`: see [docs/agent-loop.md](docs/agent-loop.md). The loopback event stream is `commertize-agent events serve`; the name `serve` is reserved for [your own handler as a paid endpoint](docs/serve-paid-endpoint.md), which is Not open.
+Exit codes, the `hand_back` on every refusal, `availableTools` on every event line, event filters, `events drain`, `whoami`, `agents`, `mandate show` and `skill check`: see [docs/agent-loop.md](docs/agent-loop.md). The loopback event stream is `commertize-agent events serve`; the name `serve` is reserved for [your own handler as a paid endpoint](docs/serve-paid-endpoint.md), which is Not open.
 
 ## Through MCP
 

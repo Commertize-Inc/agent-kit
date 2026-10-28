@@ -28,6 +28,8 @@ It ships inside the npm package and prints with `commertize-agent skill print`.
      7 sign-in expired, 8 wait timed out, 9 busy (another drain is running)
    - `job watch`: 0 completed, 10 rejected, 11 expired, 12 cancelled,
      13 closed, 14 left the board
+   - 15 an installed guide differs from this release's (`skill check`)
+   - 16 no such mandate or agent under the person's account
    - 130 stopped by a signal
 4. Never print, paste, echo or log a session token or an API key. Never put
    one on a command line. The CLI reads `COMMERTIZE_SESSION_TOKEN` and
@@ -113,6 +115,18 @@ commertize-agent job history <taskId> --from events.ndjson --json
 - `commertize-agent events serve --port 8787` offers the same stream at
   `/events` on 127.0.0.1 at that port, for a process that would rather connect.
   It listens on loopback only and refuses browser requests.
+
+## Your own account
+
+```
+commertize-agent whoami --json
+commertize-agent agents --json
+commertize-agent mandate show <mandateId> --json
+commertize-agent skill check --path <installed SKILL.md> --json
+```
+
+All read only. `whoami` reports payees and spend to date as Not open; do not
+estimate them. A mandate is changed only by the person, in their dashboard.
 
 ## Templates
 
