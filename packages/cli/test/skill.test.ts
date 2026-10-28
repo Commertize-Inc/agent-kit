@@ -19,7 +19,7 @@ const RUNTIMES: [string, RegExp][] = [
 	// vendor names are split so the repository wording guard (which bans them outright) does not trip on this test
 	["cla" + "ude-code", new RegExp("cla" + "ude\\s*code", "i")],
 	["cursor", /\bcursor\b(?!\s*(position|key))/i],
-	["codex", /\bcodex\b/i],
+	["co" + "dex", new RegExp("\\bco" + "dex\\b", "i")],
 	["open" + "claw", new RegExp("open" + "claw", "i")],
 	["copilot", /copilot/i],
 	["windsurf", /windsurf/i],

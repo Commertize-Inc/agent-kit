@@ -137,6 +137,8 @@ export async function listen(o: ListenOptions): Promise<ListenOutcome> {
 		} catch (e) {
 			if (e instanceof RouteMissingError) return finish({ reason: "route_missing", polls, events, message: e.message });
 			const status = e instanceof ApiError ? e.status : undefined;
+			// audit L-3: compute the next wait first, so retry_in_ms is the wait that actually follows
+			wait = Math.min(BACKOFF_CAP_MS, wait * 2);
 			emit("stream.error", { message: (e as Error).message, ...(status ? { status } : {}), retry_in_ms: wait });
 		}
 		polls++;
@@ -155,7 +157,6 @@ export async function listen(o: ListenOptions): Promise<ListenOutcome> {
 		}
 		if (stop) return finish({ reason: "stopped", polls, events });
 		if (o.maxPolls !== undefined && polls >= o.maxPolls) return finish({ reason: "max_polls", polls, events });
-		if (!board) wait = Math.min(BACKOFF_CAP_MS, wait * 2);
 		await sleep(board ? interval : wait);
 	}
 }

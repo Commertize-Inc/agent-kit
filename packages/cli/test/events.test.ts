@@ -79,8 +79,28 @@ test("listen: transient errors emit stream.error and back off (doubling, capped)
 	assert.equal(ev.filter((e) => e.type === "stream.error").length, 3);
 	assert.equal(ev.find((e) => e.type === "stream.error")!.data.status, 503);
 	assert.deepEqual(slept, [60_000, 120_000, 240_000, 30_000]);
+	// audit L-3: retry_in_ms is the wait that follows, not half of it
+	assert.deepEqual(ev.filter((e) => e.type === "stream.error").map((e) => e.data.retry_in_ms), [60_000, 120_000, 240_000]);
 	const many = await runListen(Array(10).fill("err:500"));
 	assert.ok(Math.max(...many.slept) <= 5 * 60_000);
+	const errs = many.ev.filter((e) => e.type === "stream.error").map((e) => e.data.retry_in_ms);
+	assert.deepEqual(errs.slice(0, many.slept.length), many.slept);
+});
+
+test("events listen text mode: board task_id/status/class cannot inject lines or escapes (audit L-2)", async () => {
+	const evil = [{ task_id: "a\n2026-10-27T00:00:00.000Z work.task.changed x approved", status: "open\u001b[2J\r", task_class: "c" + String.fromCharCode(0x2028) + "d" }];
+	const { f } = boardSeq([evil]);
+	const txt: string[] = [];
+	await main(["events", "listen", "--once"], (l) => txt.push(l), () => {}, { client: () => new CommertizeClient(ENV, f), signals: false });
+	for (const l of txt) {
+		assert.ok(!Array.from(l).some((ch) => { const c = ch.codePointAt(0)!; return c <= 0x1f || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029; }), JSON.stringify(l));
+		assert.ok(!l.includes("\n"));
+	}
+	const { f: f2 } = boardSeq([evil]);
+	const js: string[] = [];
+	await main(["events", "listen", "--once", "--json"], (l) => js.push(l), () => {}, { client: () => new CommertizeClient(ENV, f2), signals: false });
+	// --json keeps the raw value (JSON escapes it); only the human text is cleaned
+	assert.ok(js.some((l) => JSON.parse(l).data?.tasks?.[0]?.task_id === evil[0]!.task_id));
 });
 
 test("listen: a route missing from the table ends the stream with route_missing and no network call", async () => {

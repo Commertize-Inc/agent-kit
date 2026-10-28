@@ -45,6 +45,42 @@ test("release: version must equal the tag, and tests + wording guard run before 
 	assert.ok(i(/GITHUB_REF_NAME/) < i(/npm publish/));
 });
 
+/** The text of one job: from `  <name>:` under jobs to the next job or the end. */
+const job = (t: string, name: string) => {
+	const body = t.slice(t.indexOf("\njobs:"));
+	const m = body.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z0-9_-]*:\\n|$)`));
+	assert.ok(m, `job ${name} present`);
+	return m![1]!;
+};
+
+test("release: verify and publish are split; id-token only where tests do not run (audit L-1)", () => {
+	const t = strip(y());
+	const v = job(t, "verify");
+	const p = job(t, "publish");
+	assert.doesNotMatch(v, /id-token/);
+	assert.match(p, /id-token: write/);
+	assert.match(p, /needs: verify/);
+	assert.match(p, /environment: npm/);
+	assert.doesNotMatch(v, /environment:/);
+	for (const re of [/npm test/, /check-wording/, /typecheck/]) {
+		assert.match(v, re);
+		assert.doesNotMatch(p, re, `publish job must not run ${re}`);
+	}
+	assert.doesNotMatch(v, /npm publish/);
+});
+
+test("release: both jobs refuse a tag whose commit is not on main (audit M-1)", () => {
+	const t = strip(y());
+	for (const name of ["verify", "publish"]) {
+		const j = job(t, name);
+		assert.match(j, /fetch-depth: 0/, name);
+		assert.match(j, /git merge-base --is-ancestor "\$GITHUB_SHA" refs\/remotes\/origin\/main/, name);
+		const i = (re: RegExp) => j.search(re);
+		assert.ok(i(/--is-ancestor/) < i(/npm ci/), `${name}: ancestry is checked before any install`);
+		if (name === "publish") assert.ok(i(/--is-ancestor/) < i(/npm publish/));
+	}
+});
+
 test("release: every action is pinned by a full commit SHA; checkout keeps no credentials", () => {
 	const t = strip(y());
 	const uses = [...t.matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]!);

@@ -185,12 +185,27 @@ function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
 	});
 }
 
+/**
+ * audit L-2: board values are untrusted. In human text mode, C0/C1 controls (ESC, CR, LF), DEL,
+ * U+2028/2029 and bidi/format overrides become "?", and each value is cut to 128 characters, so a
+ * hostile row cannot fake a line or an escape sequence. --json is unchanged (JSON.stringify escapes).
+ */
+export function textSafe(v: unknown): string {
+	const cps = Array.from(String(v), (ch) => (unsafeCodePoint(ch.codePointAt(0)!) ? "?" : ch));
+	return cps.length > 128 ? cps.slice(0, 128).join("") + "..." : cps.join("");
+}
+
+/** C0 controls, DEL and C1 controls, zero-width marks, U+2028/2029 and bidi embeddings/overrides/isolates, BOM. */
+function unsafeCodePoint(c: number): boolean {
+	return c <= 0x1f || (c >= 0x7f && c <= 0x9f) || (c >= 0x200b && c <= 0x200f) || (c >= 0x2028 && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c === 0xfeff;
+}
+
 function textEvent(e: KitEvent): string {
 	const d = e.data;
-	const id = typeof d.task_id === "string" ? ` ${d.task_id}` : "";
-	const st = typeof d.status === "string" ? ` ${d.previous_status ? `${d.previous_status} -> ` : ""}${d.status}` : "";
-	const extra = e.type === "work.board.snapshot" ? ` ${d.count} task(s)` : e.type === "stream.error" ? ` ${d.message}` : "";
-	return `${e.ts} ${e.type}${id}${st}${extra}`;
+	const id = typeof d.task_id === "string" ? ` ${textSafe(d.task_id)}` : "";
+	const st = typeof d.status === "string" ? ` ${d.previous_status ? `${textSafe(d.previous_status)} -> ` : ""}${textSafe(d.status)}` : "";
+	const extra = e.type === "work.board.snapshot" ? ` ${textSafe(d.count)} task(s)` : e.type === "stream.error" ? ` ${textSafe(d.message)}` : "";
+	return `${textSafe(e.ts)} ${e.type}${id}${st}${extra}`;
 }
 
 /** Public status words: "Live" and "Not open" (present-tense facts only). */

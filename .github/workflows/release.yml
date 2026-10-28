@@ -1,14 +1,24 @@
 # Release: publish @commertize/agent-kit to npm from a version tag.
 #
-# Runbook OWNER_npm_publish_agent_kit_2026-10-28 R1. The first publish (0.1.0)
-# is done by hand by the owner; this workflow publishes every later version
-# through npm trusted publishing (GitHub OIDC), so no npm token exists
-# anywhere. The npm package's trusted publisher must name this repository,
-# this workflow file and the environment "npm" (runbook O3).
+# Runbook OWNER_npm_publish_agent_kit_2026-10-28 R1. The owner publishes the first
+# version (0.1.0) by hand. This workflow publishes every later version through
+# npm trusted publishing (GitHub OIDC), so no npm token exists anywhere. The
+# npm package's trusted publisher must name this repository, this workflow file
+# and the environment "npm" (runbook O3).
 #
-# Refuses unless the package version equals the tag. Runs the wording guard,
-# typecheck and tests before publishing. Actions pinned by full commit SHA
-# (same pins as ci.yml).
+# Prerequisites before O3 (audit M-1). Without them, any identity that can
+# push a tag could publish:
+#   - The GitHub environment "npm" has the owner as required reviewer and a
+#     deployment tag policy of v*.*.* only.
+#   - A tag ruleset limits creation of v* tags to the owner.
+#
+# Two jobs (audit L-1):
+#   - verify runs the dev-dependency code (wording guard, typecheck, tests)
+#     with no id-token.
+#   - publish holds id-token. It needs verify and the npm environment approval,
+#     and it runs no tests.
+# Both jobs refuse unless the version equals the tag and the tagged commit is
+# on main. Actions are pinned by full commit SHA (same pins as ci.yml).
 name: Release
 
 on:
@@ -24,28 +34,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: publish
+  verify:
+    name: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    environment: npm
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Tagged commit must be on main
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main" >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: npm with trusted publishing support
-        run: npm install -g npm@11.6.2
 
       - name: Version must equal the tag
         run: |
@@ -67,6 +80,51 @@ jobs:
 
       - name: Test
         run: npm test
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Tagged commit must be on main
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main" >&2
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: npm with trusted publishing support
+        run: npm install -g npm@11.6.2
+
+      - name: Version must equal the tag
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have="$(node -p 'require("./packages/cli/package.json").version')"
+          if [ "$want" != "$have" ]; then
+            echo "tag $GITHUB_REF_NAME does not match packages/cli version $have" >&2
+            exit 1
+          fi
+
+      - name: Install (frozen lockfile)
+        run: npm ci --ignore-scripts
 
       - name: Publish
         working-directory: packages/cli
