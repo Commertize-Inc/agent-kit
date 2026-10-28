@@ -15,8 +15,15 @@
  *  - never printed, never logged, no file fallback. On a platform without
  *    the macOS keychain, storing refuses: use the environment variables.
  *
- * The keychain is hygiene, not a boundary: any process running as you can
- * ask for the item (macOS may prompt).
+ * The keychain is hygiene, not a boundary. These items are created through
+ * /usr/bin/security, which is on each item's access list, so any process
+ * running as you can read them through the same tool silently: there is no
+ * prompt.
+ *
+ * Lookups are three-state: found (exit 0), not found (exit 44, the CLI's
+ * "item not found"), or anything else (a locked or unavailable keychain, a
+ * headless session), which stops the command instead of being read as
+ * "not stored".
  */
 
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
@@ -40,6 +47,20 @@ export interface Keychain {
 	get(name: KeyName): string | undefined;
 	set(name: KeyName, value: string): void;
 	clear(name: KeyName): boolean;
+	/** Create only: never replaces an existing item ("exists"). Required for the device signer. */
+	add?(name: KeyName, value: string): "added" | "exists";
+}
+
+/** The CLI's exit status for "item not found". */
+export const ITEM_NOT_FOUND = 44;
+/** The CLI's exit status for "item already exists" (add without -U). */
+export const ITEM_EXISTS = 45;
+
+/** Three-state lookup: 0 found, 44 not found, anything else stops the command. */
+function found(status: number | null, name: string): boolean {
+	if (status === 0) return true;
+	if (status === ITEM_NOT_FOUND) return false;
+	throw new KitConfigError(`the OS keychain did not answer for ${name} (exit ${status}; locked or unavailable?); stopping rather than reading it as absent`);
 }
 
 export function checkName(name: string): KeyName {
@@ -83,13 +104,13 @@ export function osKeychain(run: Runner = defaultRunner, ok: () => boolean = () =
 		has(name) {
 			checkName(name);
 			if (!ok()) return false;
-			return run(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name]).status === 0;
+			return found(run(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name]).status, name);
 		},
 		get(name) {
 			checkName(name);
 			if (!ok()) return undefined;
 			const r = run(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", name, "-w"]);
-			if (r.status !== 0) return undefined;
+			if (!found(r.status, name)) return undefined;
 			const v = r.stdout.trim();
 			// A stored value that fails the allowlist is refused, not used.
 			if (!VALUE.test(v)) throw new KitConfigError(`keychain item ${KEYCHAIN_SERVICE}/${name} has a disallowed shape; refusing (value not shown)`);
@@ -102,6 +123,18 @@ export function osKeychain(run: Runner = defaultRunner, ok: () => boolean = () =
 			// -U updates an existing item. The value is on stdin, inside a single -i command line.
 			const r = run(["-i"], `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${name} -w ${value}\n`);
 			if (r.status !== 0) throw new KitConfigError(`keychain write for ${name} failed (exit ${r.status})`);
+		},
+		add(name, value) {
+			checkName(name);
+			checkValue(value);
+			need();
+			// No -U: the keychain itself refuses to replace an existing item, atomically.
+			const r = run(["-i"], `add-generic-password -s ${KEYCHAIN_SERVICE} -a ${name} -w ${value}\n`);
+			if (r.status === 0) return "added";
+			if (r.status === ITEM_EXISTS) return "exists";
+			// Any other status: find out whether an item is there (three-state; a locked keychain stops here).
+			if (this.has(name)) return "exists";
+			throw new KitConfigError(`keychain write for ${name} failed (exit ${r.status})`);
 		},
 		clear(name) {
 			checkName(name);

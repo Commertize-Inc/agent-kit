@@ -103,11 +103,13 @@ export async function listAgents(client: CommertizeClient, o: { limit?: number; 
 	if (o.cursor !== undefined && !UUID.test(o.cursor)) throw new KitConfigError("--cursor is an agent id from a previous page");
 	const p = await client.call<AgentsPage>("principalAgents", { query: { limit: String(limit), ...(o.cursor ? { cursor: o.cursor } : {}) } });
 	const agents = rows(p ?? {});
+	// Rows that fail the shape or pattern checks are left out, and counted so the caller can see they were.
+	const dropped = (Array.isArray(p?.agents) ? p.agents.length : 0) - agents.length;
 	// The cursor goes into a printed next_step command line: anything but null or a UUID is refused, never echoed.
 	const nc = p?.nextCursor;
 	if (nc !== undefined && nc !== null && (typeof nc !== "string" || !UUID.test(nc)))
 		throw new UnexpectedAnswerError("GET /mandates/principal/agents answered a nextCursor that is not an agent id; refusing");
-	return { agents, next_cursor: typeof nc === "string" ? nc : null, kyb: kybView(p ?? {}) };
+	return { agents, dropped_rows: dropped, next_cursor: typeof nc === "string" ? nc : null, kyb: kybView(p ?? {}) };
 }
 
 export async function mandateShow(client: CommertizeClient, mandateId: string) {
@@ -194,6 +196,7 @@ export async function whoami(client: CommertizeClient, o: WhoamiOptions) {
 		mandates: agent ? agent.mandates : [],
 		agents_count: r.agents.length,
 		agents_truncated: r.next_cursor !== null,
+		agents_dropped_rows: r.dropped_rows,
 		payees: { status: "Not open", value: null },
 		spend_to_date: { status: "Not open", value: null },
 		receipts: o.receiptsFile ? countReceipts(o.receiptsFile) : { status: "not counted: pass --receipts <file>", value: null },

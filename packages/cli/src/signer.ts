@@ -13,9 +13,12 @@
  *   signer link     binding the key to your agent needs the pairing routes,
  *                   which are Not open: it stops before any network call
  *
- * The private key is stored as PKCS#8 DER in base64url. It is readable by
- * any process running as you (the keychain is hygiene, not a boundary), and
- * it is exportable: this kit does not use a hardware-backed key.
+ * The private key is stored as PKCS#8 DER in base64url. Any process running
+ * as you can read it silently (keychain.ts), and it is exportable: this kit
+ * does not use a hardware-backed key. So, while the key is software-only, it
+ * is an attestation key only: it never signs a payment, a transfer or a
+ * mandate. `signer link` stays Not open until the server both offers pairing
+ * and requires the principal to re-link after a key rotation.
  * `signer init` never replaces a stored key; remove one with
  * `configure --clear COMMERTIZE_SIGNER_KEY`.
  */
@@ -61,24 +64,25 @@ function needKeychain(kc: Keychain | undefined): Keychain {
 
 export function signerInit(kc: Keychain | undefined): SignerInfo {
 	const k = needKeychain(kc);
+	if (!k.add) throw new KitConfigError("this keychain cannot create an item without replacing one; no signer key stored");
+	// has() is three-state: a locked or unreadable keychain stops here, before any write.
 	if (k.has(SIGNER_KEY)) throw new SignerExistsError();
 	const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 	const pkcs8 = (privateKey.export({ format: "der", type: "pkcs8" }) as Buffer).toString("base64url");
 	const want = infoFromPrivate(pkcs8);
-	k.set(SIGNER_KEY, pkcs8);
+	// Create-only: if another init got there first, the keychain refuses and that key is left alone.
+	if (k.add(SIGNER_KEY, pkcs8) === "exists") throw new SignerExistsError();
 	// Read it back: report only a key the keychain actually holds.
-	let intact = false;
+	let stored: string | undefined;
 	try {
-		const got = k.get(SIGNER_KEY);
-		intact = !!got && infoFromPrivate(got).fingerprint === want.fingerprint;
+		stored = k.get(SIGNER_KEY);
 	} catch {
-		intact = false;
+		throw new KitConfigError("the keychain could not be read back after storing the signer key; nothing removed, run signer status");
 	}
-	if (!intact) {
-		k.clear(SIGNER_KEY);
-		throw new KitConfigError("the keychain did not return the signer key just stored; removed it, nothing kept");
-	}
-	return want;
+	if (stored === pkcs8) return want;
+	// Not what this process wrote: someone else's key (a concurrent init) or nothing. Never delete a key we did not write.
+	if (stored === undefined) throw new KitConfigError("the signer key just stored is not in the keychain; nothing kept");
+	throw new SignerExistsError();
 }
 
 export function signerStatus(kc: Keychain | undefined): { stored: boolean; signer: SignerInfo | null } {

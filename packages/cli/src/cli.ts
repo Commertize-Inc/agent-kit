@@ -852,9 +852,10 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			exit_code: EXIT.ok,
 			data: r,
 			next_step: r.next_cursor ? `commertize-agent agents --cursor ${r.next_cursor} --json` : null,
-			text: r.agents.length
+			text: (r.agents.length
 				? r.agents.map((x) => `${textSafe(x.agentAddress)}  ${textSafe(x.passportId)}  KYA ${textSafe(x.kyaStatus)}  mandates ${x.mandates.length}`)
-				: ["No agents under this account."],
+				: ["No agents under this account."]
+			).concat(r.dropped_rows ? [`(${r.dropped_rows} row(s) from the server were malformed and left out)`] : []),
 		};
 	}
 	if (cmd === "mandate") {

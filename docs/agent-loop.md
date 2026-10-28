@@ -199,9 +199,15 @@ commertize-agent signer link --json                # exit 4: Not open
   already ended is reported as such and nothing is sent.
 - `signer init` creates a P-256 device key and keeps the private half in the
   OS keychain (macOS; it is never written to a file and never printed). It
-  never replaces a stored key: remove one with
-  `commertize-agent configure --clear COMMERTIZE_SIGNER_KEY`. The key is
-  exportable software key material, not a hardware key, and any process
-  running as you can read it. It never signs a payment or a mandate.
+  never replaces a stored key, even when two inits race (the keychain
+  refuses the second create): remove one with
+  `commertize-agent configure --clear COMMERTIZE_SIGNER_KEY`. If the
+  keychain is locked or does not answer, the command stops instead of
+  treating the key as absent. The key is exportable software key material,
+  not a hardware key, and any process running as you can read it silently.
+  While it is software-only it is an attestation key only: it never signs a
+  payment, a transfer or a mandate.
 - `signer link` (binding the device key to your agent) needs the pairing
-  routes, which are Not open: it exits 4 before any network call.
+  routes, which are Not open: it exits 4 before any network call. It stays
+  Not open until the server offers pairing and also requires the person to
+  re-link after a key rotation.

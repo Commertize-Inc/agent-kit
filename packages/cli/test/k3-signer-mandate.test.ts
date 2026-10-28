@@ -3,9 +3,9 @@
 // K-3: signer init/status/link (device key; link Not open), mandate request/request-change (hand-back), mandate revoke (read back).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash, createPublicKey, generateKeyPairSync } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { CommertizeClient } from "../src/index.ts";
-import { checkValue, type Keychain, type KeyName } from "../src/keychain.ts";
+import { checkValue, osKeychain, type Keychain, type KeyName, type Runner } from "../src/keychain.ts";
 import { SIGNER_KEY } from "../src/signer.ts";
 import { main } from "../src/cli.ts";
 
@@ -22,6 +22,7 @@ function memKeychain(opts: { available?: boolean; tamperRead?: boolean } = {}) {
 		get: (n) => (opts.tamperRead && store.has(n) ? "MIGdifferent" + store.get(n)!.slice(12) : store.get(n)),
 		set: (n, v) => void store.set(n, checkValue(v)),
 		clear: (n) => store.delete(n),
+		add: (n, v) => (store.has(n) ? "exists" : (store.set(n, checkValue(v)), "added")),
 	};
 	return { kc, store };
 }
@@ -62,7 +63,7 @@ test("signer init: a P-256 key in the keychain; prints the public key and its fi
 	assert.equal(st.o.data.link, "Not open");
 });
 
-test("signer init never replaces a stored key; without a keychain nothing is stored; a bad read-back is removed, not kept", async () => {
+test("signer init never replaces a stored key; without a keychain nothing is stored; a changed read-back is never deleted", async () => {
 	const { kc, store } = memKeychain();
 	await run(["signer", "init"], { kc });
 	const first = store.get(SIGNER_KEY);
@@ -78,7 +79,8 @@ test("signer init never replaces a stored key; without a keychain nothing is sto
 	const t = memKeychain({ tamperRead: true });
 	const bad = await run(["signer", "init"], { kc: t.kc });
 	assert.equal(bad.code, 1);
-	assert.equal(t.store.has(SIGNER_KEY), false, "a key the keychain did not return intact is removed");
+	assert.equal(t.store.has(SIGNER_KEY), true, "a key that reads back different is never deleted (it may be another init's)");
+	assert.equal(bad.o.hand_back.reason, "signer_exists");
 });
 
 test("signer status refuses a stored value that is not a P-256 key this kit wrote", async () => {
@@ -203,4 +205,112 @@ test("a generated signer key passes the keychain value allowlist", () => {
 		const v = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "der", type: "pkcs8" }).toString("base64url");
 		assert.equal(checkValue(v), v);
 	}
+});
+
+// --- review round 1: three-state lookups, create-only add, never delete a key this process did not write ---
+
+/** The real osKeychain over a scripted runner: `find` and `add` statuses are chosen per test. */
+function scripted(o: { find?: number; findValue?: () => string | undefined; add?: number }) {
+	const calls: { args: string[]; input?: string }[] = [];
+	const run: Runner = (args, input) => {
+		calls.push({ args, input });
+		if (args[0] === "-i") return { status: o.add ?? 0, stdout: "" };
+		if (args[0] === "find-generic-password") {
+			if (args.includes("-w")) {
+				const v = o.findValue?.();
+				return v === undefined ? { status: o.find ?? 44, stdout: "" } : { status: 0, stdout: v + "\n" };
+			}
+			return { status: o.find ?? 44, stdout: "" };
+		}
+		if (args[0] === "delete-generic-password") return { status: 0, stdout: "" };
+		return { status: 1, stdout: "" };
+	};
+	return { kc: osKeychain(run, () => true), calls };
+}
+
+test("keychain lookups are three-state: 36 (locked or headless) stops signer init before any write; status and configure stop too", async () => {
+	const s = scripted({ find: 36 });
+	const r = await run(["signer", "init"], { kc: s.kc });
+	assert.equal(r.code, 1);
+	assert.match(r.o.error.message, /did not answer .*exit 36/);
+	assert.ok(!s.calls.some((c) => c.args[0] === "-i" || c.args[0] === "delete-generic-password"), "no write, no delete");
+	assert.equal((await run(["signer", "status"], { kc: scripted({ find: 36 }).kc })).code, 1);
+	assert.equal((await run(["configure"], { kc: scripted({ find: 36 }).kc })).code, 1);
+});
+
+test("signer init adds without -U (create-only); an existing item (45) is never replaced or deleted", async () => {
+	let written: string | undefined;
+	const ok = scripted({ findValue: () => written });
+	const base = ok.kc;
+	const kc: Keychain = { ...base, add: (n, v) => ((written = v), base.add!(n, v)) };
+	const r = await run(["signer", "init"], { kc });
+	assert.equal(r.code, 0);
+	const add = ok.calls.find((c) => c.args[0] === "-i")!;
+	assert.match(add.input!, /^add-generic-password -s commertize-agent-kit -a COMMERTIZE_SIGNER_KEY -w /);
+	assert.doesNotMatch(add.input!, / -U /);
+	const dup = scripted({ add: 45 });
+	const d = await run(["signer", "init"], { kc: dup.kc });
+	assert.equal(d.code, 1);
+	assert.equal(d.o.hand_back.reason, "signer_exists");
+	assert.ok(!dup.calls.some((c) => c.args[0] === "delete-generic-password"));
+});
+
+test("signer init read-back: a different value (another init won) or a missing item is never deleted", async () => {
+	const other = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "der", type: "pkcs8" }).toString("base64url");
+	const raced = scripted({ findValue: () => other });
+	const kc: Keychain = { ...raced.kc, has: () => false };
+	const r = await run(["signer", "init"], { kc });
+	assert.equal(r.code, 1);
+	assert.equal(r.o.hand_back.reason, "signer_exists");
+	assert.ok(!raced.calls.some((c) => c.args[0] === "delete-generic-password"), "the other init's key is left alone");
+	const gone = scripted({});
+	const g = await run(["signer", "init"], { kc: gone.kc });
+	assert.equal(g.code, 1);
+	assert.match(g.o.error.message, /not in the keychain/);
+	assert.ok(!gone.calls.some((c) => c.args[0] === "delete-generic-password"));
+});
+
+test("concurrent signer init: both see no key, only one create succeeds, the winner's key survives", async () => {
+	const store = new Map<KeyName, string>();
+	const kc: Keychain = {
+		available: () => true,
+		has: () => false, // both inits checked before either wrote
+		get: (n) => store.get(n),
+		set: () => {
+			throw new Error("init must not use set (it replaces)");
+		},
+		clear: (n) => store.delete(n),
+		add: (n, v) => (store.has(n) ? "exists" : (store.set(n, v), "added")),
+	};
+	const [a, b] = await Promise.all([run(["signer", "init"], { kc }), run(["signer", "init"], { kc })]);
+	assert.deepEqual([a.code, b.code].sort(), [0, 1]);
+	const winner = a.code === 0 ? a : b;
+	assert.equal(store.size, 1);
+	const spki = createPublicKey(createPrivateKey({ key: Buffer.from(store.get(SIGNER_KEY)!, "base64url"), format: "der", type: "pkcs8" })).export({ format: "der", type: "spki" });
+	assert.equal(winner.o.data.signer.fingerprint, "sha256:" + createHash("sha256").update(spki).digest("hex"));
+});
+
+test("keychain get(): a stored signer value outside the charset allowlist is refused, not parsed", async () => {
+	const s = scripted({ findValue: () => "bad value; rm -rf" });
+	const r = await run(["signer", "status"], { kc: s.kc });
+	assert.equal(r.code, 1);
+	assert.match(r.o.error.message, /disallowed shape/);
+});
+
+test("mandate revoke: expired, terminated or revoked with no endedAt counts as ended; nothing is sent", async () => {
+	for (const st of ["expired", "terminated", "revoked"]) {
+		const r = await run(["mandate", "revoke", M1, "--confirm"], { api: server({ start: st }) });
+		assert.equal(r.code, 0, st);
+		assert.equal(r.o.data.already_ended, true, st);
+		assert.ok(!r.calls.some((c) => c.method === "POST"), st);
+	}
+});
+
+test("agents: malformed rows are left out and counted (data.dropped_rows, whoami agents_dropped_rows)", async () => {
+	const body = { nextCursor: null, agents: [{ passportId: "..", agentAddress: A1, kyaStatus: "active", mandates: [] }, { passportId: P1, agentAddress: A1, kyaStatus: "active", mandates: [] }, "junk"] };
+	const r = await run(["agents"], { api: () => ({ body }) });
+	assert.equal(r.o.data.agents.length, 1);
+	assert.equal(r.o.data.dropped_rows, 2);
+	const w = await run(["whoami"], { api: () => ({ body }) });
+	assert.equal(w.o.data.agents_dropped_rows, 2);
 });

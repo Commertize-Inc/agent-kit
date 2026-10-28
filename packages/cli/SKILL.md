@@ -153,7 +153,8 @@ commertize-agent signer status --json
   `--dry-run` first, and with `--confirm` only when the person asked for it.
   Trust the status it reads back, not the route's ok.
 - `signer init` keeps a device key in the OS keychain; never print or copy
-  it. `signer link` is Not open (exit 4).
+  it. It is an attestation key only, never a payment or mandate signer.
+  `signer link` is Not open (exit 4).
 
 ## Templates
 
