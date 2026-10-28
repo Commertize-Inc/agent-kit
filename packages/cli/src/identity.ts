@@ -6,9 +6,10 @@
  * passport's KYA check record. Two reads: GET /mandates/principal/agents,
  * then GET /kya/passports/:pid/checks. Read only.
  *
- * The check route can be switched off on a deployment (it then answers 404
- * for every passport). That is reported as `checks: null` with the reason,
+ * A 404 from the check route (switched off on the deployment, or no record
+ * for this passport there) is reported as `checks: null` with the reason,
  * never as "no checks": an empty list and an unavailable record differ.
+ * Check rows are never dropped: a row without a result refuses the answer.
  */
 
 import { ApiError, CommertizeClient, KitConfigError } from "./client.ts";
@@ -19,12 +20,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Pages of agents read to find the one asked for (50 each). */
 export const IDENTITY_SCAN_PAGES = 20;
 
+/** One served KYA check. Only `result` is required; any other missing field is null, never a reason to drop the row. */
 export interface KyaCheckRow {
-	id: string;
-	checkId: string;
+	id: string | null;
+	checkId: string | null;
 	result: string;
-	policyVersion: string;
-	checkedAt: string;
+	policyVersion: string | null;
+	checkedAt: string | null;
 }
 
 /** Finds one of the principal's agents by 0x address or passport id, following pages (bounded). */
@@ -49,13 +51,16 @@ export async function identityShow(client: CommertizeClient, ref: string) {
 	try {
 		const r = await client.call<{ checks?: unknown }>("kyaChecks", { params: { pid: a.passportId } });
 		if (!Array.isArray(r?.checks)) throw new UnexpectedAnswerError("GET /kya/passports/:pid/checks answered without a checks list; refusing");
-		checks = r.checks.filter(
-			(c): c is KyaCheckRow =>
-				typeof c?.id === "string" && typeof c?.checkId === "string" && typeof c?.result === "string" && typeof c?.policyVersion === "string" && typeof c?.checkedAt === "string"
-		);
+		// Every row is kept: dropping one could hide a failed check. A missing field becomes null;
+		// a row without a result cannot be shown honestly, so the whole answer is refused.
+		const str = (v: unknown) => (typeof v === "string" ? v : null);
+		checks = r.checks.map((c: Record<string, unknown> | null) => {
+			if (typeof c?.result !== "string") throw new UnexpectedAnswerError("a KYA check row has no result; refusing rather than hiding it");
+			return { id: str(c.id), checkId: str(c.checkId), result: c.result, policyVersion: str(c.policyVersion), checkedAt: str(c.checkedAt) };
+		});
 	} catch (e) {
 		if (!(e instanceof ApiError) || e.status !== 404) throw e;
-		checks_note = "the KYA check record answered 404: it is switched off on this deployment";
+		checks_note = "the KYA check record answered 404: it is not available for this passport on this deployment";
 	}
 	return {
 		passport: {

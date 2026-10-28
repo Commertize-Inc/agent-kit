@@ -131,8 +131,10 @@ commertize-agent wallet balance --json
 
 `agents --use` records which of the person's active agents you act as (a
 local file, no secret); `whoami`, `identity show` and `wallet` then use it.
-Exit 16 with `no_active_agent` means none is set: list them with `agents`
-and ask the person which one. Everything else here is read only.
+Exit 16 with `no_active_agent` (from `identity show` or `wallet`) means none
+is set: list them with `agents` and ask the person which one. Revocation is
+checked by `whoami` and `identity show`, not by `wallet`: `wallet address`
+is local and says nothing about KYA status. Everything else here is read only.
 `wallet balance` holds no key and signs nothing. `whoami` reports payees and spend to date as Not open; do not
 estimate them. A mandate is changed only by the person, in their dashboard.
 

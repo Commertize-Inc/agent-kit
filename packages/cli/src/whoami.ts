@@ -62,9 +62,16 @@ export const MANDATE_SCAN_PAGES = 20;
 
 function rows(p: AgentsPage): AgentRow[] {
 	const list = Array.isArray(p.agents) ? p.agents : [];
+	// The passport id goes into URLs (identity show) and the address into RPC calls: both are
+	// pattern-checked here, so a row like passportId ".." never reaches a request.
 	return list.filter(
 		(a): a is AgentRow =>
-			typeof a?.passportId === "string" && typeof a?.agentAddress === "string" && typeof a?.kyaStatus === "string" && Array.isArray(a?.mandates)
+			typeof a?.passportId === "string" &&
+			UUID.test(a.passportId) &&
+			typeof a?.agentAddress === "string" &&
+			ADDRESS.test(a.agentAddress) &&
+			typeof a?.kyaStatus === "string" &&
+			Array.isArray(a?.mandates)
 	);
 }
 
