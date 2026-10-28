@@ -5,8 +5,8 @@
  * Credential storage in the OS keychain (macOS login keychain), the same
  * pattern Commertize uses internally:
  *
- *  - one service, `commertize-agent-kit`; two accounts,
- *    COMMERTIZE_SESSION_TOKEN and COMMERTIZE_API_KEY;
+ *  - one service, `commertize-agent-kit`; accounts COMMERTIZE_SESSION_TOKEN
+ *    and COMMERTIZE_API_KEY, plus the device signer key (signer.ts);
  *  - only through /usr/bin/security, by absolute path, after checking it is a
  *    root-owned regular file not writable by group or others (never a PATH
  *    lookup);
@@ -25,8 +25,11 @@ import { KitConfigError } from "./client.ts";
 
 export const KEYCHAIN_SERVICE = "commertize-agent-kit";
 export const SECURITY_BIN = "/usr/bin/security";
+/** Credentials (environment or keychain). */
 export const KEY_NAMES = ["COMMERTIZE_SESSION_TOKEN", "COMMERTIZE_API_KEY"] as const;
-export type KeyName = (typeof KEY_NAMES)[number];
+/** Every keychain item this kit may touch: the credentials plus the device signer key (signer.ts). */
+export const KEYCHAIN_NAMES = [...KEY_NAMES, "COMMERTIZE_SIGNER_KEY"] as const;
+export type KeyName = (typeof KEYCHAIN_NAMES)[number];
 const VALUE = /^[A-Za-z0-9][A-Za-z0-9._~+/=-]{7,4095}$/;
 
 export type Runner = (args: string[], input?: string) => { status: number | null; stdout: string };
@@ -40,7 +43,7 @@ export interface Keychain {
 }
 
 export function checkName(name: string): KeyName {
-	if (!(KEY_NAMES as readonly string[]).includes(name)) throw new KitConfigError(`keychain name must be one of ${KEY_NAMES.join(", ")}`);
+	if (!(KEYCHAIN_NAMES as readonly string[]).includes(name)) throw new KitConfigError(`keychain name must be one of ${KEYCHAIN_NAMES.join(", ")}`);
 	return name as KeyName;
 }
 

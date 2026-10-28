@@ -75,6 +75,10 @@ export const HAND_BACK = {
 	// The principal sets the mandate up: the create page, not the list.
 	mandate_not_open: P("/mandates/new"),
 	mandate_not_found: P("/mandates"),
+	// The agent never writes or signs its own mandate: asking for one or a change is the principal's step.
+	mandate_request: P("/mandates/new"),
+	mandate_change: P("/mandates"),
+	signer_exists: A,
 	agent_not_found: P("/agents"),
 	no_active_agent: A,
 	skill_drift: A,
