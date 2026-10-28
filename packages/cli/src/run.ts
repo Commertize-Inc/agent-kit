@@ -4,6 +4,9 @@
 import { CommertizeClient, KitConfigError, readEnv } from "./client.ts";
 import { ReceiptLog, ed25519Signer } from "./cas.ts";
 import type { ModelSeam, Template, TemplateResult } from "./kit.ts";
+import { agentKeyReceiptLog } from "./receiptsigner.ts";
+import { osKeychain } from "./keychain.ts";
+import { homedir } from "node:os";
 
 /**
  * Runs a template once on your machine, with ids and your signing seed read
@@ -26,11 +29,20 @@ export async function runOnce(
 		if (!v) throw new KitConfigError(`${k} is not set`);
 		return v;
 	};
-	const keyId = need("COMMERTIZE_AGENT_KEY_ID");
-	const log = new ReceiptLog(
-		{ mandateId: need("COMMERTIZE_MANDATE_ID"), agentId: need("COMMERTIZE_AGENT_ID"), agentKeyId: keyId },
-		ed25519Signer(need("COMMERTIZE_AGENT_SEED"), keyId)
-	);
+	const mode = env.COMMERTIZE_RECEIPT_SIGNER?.trim() ?? "ed25519";
+	if (mode !== "ed25519" && mode !== "agent-key") throw new KitConfigError('COMMERTIZE_RECEIPT_SIGNER is "ed25519" (default) or "agent-key"');
+	let log: ReceiptLog;
+	if (mode === "agent-key") {
+		// secp256k1 with the agent key from the OS keychain (CAS-1 5.1.1); key_id is the agent address.
+		// The kill file ~/.commertize/DISABLED stops it before and during the run.
+		log = agentKeyReceiptLog({ mandateId: need("COMMERTIZE_MANDATE_ID"), agentId: need("COMMERTIZE_AGENT_ID") }, { keychain: osKeychain(), home: homedir() });
+	} else {
+		const keyId = need("COMMERTIZE_AGENT_KEY_ID");
+		log = new ReceiptLog(
+			{ mandateId: need("COMMERTIZE_MANDATE_ID"), agentId: need("COMMERTIZE_AGENT_ID"), agentKeyId: keyId },
+			ed25519Signer(need("COMMERTIZE_AGENT_SEED"), keyId)
+		);
+	}
 	const res = await template.run({ client: new CommertizeClient(readEnv(env, allowHost)), log, model });
 	console.log(JSON.stringify(res, null, 2));
 	process.exitCode = res.stopped.length ? 3 : 0;

@@ -22,6 +22,8 @@ import { balance, isNetwork, NETWORKS, TOKENS, type Token } from "./chain.ts";
 import { signerInit, signerStatus, SignerExistsError } from "./signer.ts";
 import { mandateRevoke } from "./mandate.ts";
 import { AgentKeyExistsError, agentKeyStatus, classifyTypedData, importAgentKey, readTypedDataFile } from "./agentkey.ts";
+import { agentKeyReceiptLog, assertNotDisabled, DisabledError, receiptDigest } from "./receiptsigner.ts";
+import { recoverAddress } from "./secp256k1.ts";
 import { homedir } from "node:os";
 
 /** No agent was named and no profile has one set. */
@@ -58,6 +60,7 @@ export const COMMANDS = [
 	"signer",
 	"identity",
 	"wallet",
+	"receipt",
 	"events",
 	"job",
 	"serve",
@@ -104,6 +107,9 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent wallet key import --stdin | status
                                              your agent's own key, from stdin only, into the OS
                                              keychain (create-only; must match the active agent)
+  commertize-agent receipt test-sign [--profile name]
+                                             sign one self-test receipt with the agent key and
+                                             check it recovers; exit 19 if ~/.commertize/DISABLED
   commertize-agent wallet sign-typed-data --file <typed-data.json>
                                              signs nothing in this release: the allowed list is
                                              empty (exit 4); a CAS mandate goes to the person
@@ -286,6 +292,15 @@ function errorResult(command: string, e: unknown): Result {
 			error: { code: "source_changed", message: e.message },
 			next_step: "Drain with a new --consumer name",
 			hand_back: handBack("drain_source_changed"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof DisabledError)
+		return {
+			command,
+			exit_code: EXIT.frozen,
+			error: { code: "config", message: e.message },
+			next_step: null,
+			hand_back: handBack("disabled"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	if (e instanceof AgentKeyExistsError)
@@ -984,6 +999,26 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 					(c) => `  ${textSafe(c.result)}  ${textSafe(c.checkId ?? "(no check id)")}  ${textSafe(c.checkedAt ?? "(no date)")}  policy ${textSafe(c.policyVersion ?? "(none)")}`
 				),
 			],
+		};
+	}
+	if (cmd === "receipt") {
+		const { values, positionals } = parse(rest, { profile: { type: "string" } }, true);
+		if (positionals.length !== 1 || positionals[0] !== "test-sign") throw new UsageError("receipt needs exactly: test-sign");
+		// The kill file is checked first, before the keychain is touched (and again before the signature).
+		assertNotDisabled(home);
+		const active = activeAgent(values);
+		const log = agentKeyReceiptLog({ mandateId: "kit-self-test", agentId: active?.passportId ?? "kit-self-test" }, { keychain: kc, home });
+		const r = await log.record({ verb: "check", objectRef: "kit:receipt-self-test", evidence: { purpose: "agent key self-test" } });
+		const sig = r.signatures[0]!;
+		const recovered = recoverAddress(receiptDigest(r.hash), Buffer.from(sig.sig, "base64url")).toLowerCase();
+		const ok = recovered === sig.key_id;
+		return {
+			command: cmd,
+			exit_code: ok ? EXIT.ok : EXIT.error,
+			data: { receipt: r, recovered, matches_key_id: ok, matches_active_agent: active ? active.agentAddress.toLowerCase() === sig.key_id : null },
+			...(ok ? {} : { error: { code: "internal" as const, message: "the self-test signature did not recover to its key_id" } }),
+			next_step: null,
+			text: [`Signed a self-test receipt as ${sig.key_id}; recovered ${recovered} (${ok ? "match" : "MISMATCH"}).`],
 		};
 	}
 	if (cmd === "wallet" && rest[0] === "key") {

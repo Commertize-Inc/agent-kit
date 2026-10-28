@@ -247,5 +247,36 @@ commertize-agent wallet sign-typed-data --file typed-data.json --json   # exit 4
   - anything else is not on the list the agent key may sign, which is
     empty in this release: `typed_data_not_allowlisted`.
 - CAS receipts are not typed data: they are signed over `"CAS-v0.1\n"` +
-  the record hash. The CAS v0.1 receipt spec publishes no secp256k1 test
-  vectors, so the kit signs receipts with ed25519 only.
+  the record hash, as below.
+
+## Receipts signed with the agent key
+
+```
+commertize-agent receipt test-sign --json
+COMMERTIZE_RECEIPT_SIGNER=agent-key  (when running a template)
+```
+
+- The kit signs CAS receipts with the agent key as CAS-1 section 5.1.1
+  defines: the message `"CAS-v0.1\n"` + the receipt hash (80 bytes), its
+  EIP-191 digest, a 65-byte `r || s || v` signature (low `s`, `v` 27 or 28,
+  RFC 6979 nonce), `alg: "secp256k1"`, and `key_id` = the agent address in
+  lowercase. It reproduces every valid conformance vector of
+  Commertize-Inc/cas-spec byte for byte.
+- It signs only receipts it built itself: the receipt log builds the
+  record, computes its hash, and only then signs. No command or library
+  function signs a hash, a message or typed data handed to it. Every
+  signature is checked by recovering its signer before it is used.
+- `receipt test-sign` signs one self-test receipt and shows that it
+  recovers to the key's address. Templates sign with the agent key when
+  `COMMERTIZE_RECEIPT_SIGNER=agent-key` is set; the default stays ed25519
+  with `COMMERTIZE_AGENT_SEED`.
+- **Kill switch.** If `~/.commertize/DISABLED` exists, nothing is signed:
+  `receipt test-sign` exits 19 (`hand_back.reason: "disabled"`), and a
+  running template stops at its next receipt. The file is checked before
+  the keychain is read and again before every signature; if its state
+  cannot be read, signing stays off. Only the person removes it.
+- **Phishing.** A signature over `"CAS-v0.1\n"` + a hash is a valid receipt
+  for whatever record has that hash. Configure the wallet or signer that
+  holds the agent key to refuse any message that starts with `CAS-v0.1`
+  unless the kit asks, and never sign such a message for anyone else: a
+  signature obtained that way is a valid receipt for an attacker's record.

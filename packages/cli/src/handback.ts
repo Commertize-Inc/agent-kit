@@ -80,6 +80,8 @@ export const HAND_BACK = {
 	mandate_change: P("/mandates"),
 	signer_exists: A,
 	agent_key_exists: A,
+	// The operator's kill file (~/.commertize/DISABLED) stops all signing; only the person removes it.
+	disabled: P("/agents"),
 	// Typed data the agent key will not sign (the allowed list is empty in this release).
 	typed_data_not_allowlisted: A,
 	payments_not_open: A,

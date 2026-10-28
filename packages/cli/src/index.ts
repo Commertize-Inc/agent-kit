@@ -9,4 +9,6 @@ export * from "./mcp.ts";
 export * from "./auth.ts";
 export * from "./keychain.ts";
 export { runOnce } from "./run.ts";
+// The agent-key receipt log only; the hash-level signer (signCasHash) is deliberately not exported.
+export { agentKeyReceiptLog, assertNotDisabled, DisabledError, killFilePath, receiptDigest, RECEIPT_PREFIX } from "./receiptsigner.ts";
 export { canonicalize, CanonicalizationError } from "./canonical.ts";
