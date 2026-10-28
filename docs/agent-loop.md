@@ -211,3 +211,34 @@ commertize-agent signer link --json                # exit 4: Not open
   routes, which are Not open: it exits 4 before any network call. It stays
   Not open until the server offers pairing and also requires the person to
   re-link after a key rotation.
+
+## The agent key
+
+```
+... | commertize-agent wallet key import --stdin --json
+commertize-agent wallet key status --json
+commertize-agent wallet sign-typed-data --file typed-data.json --json   # exit 4: nothing is signed
+```
+
+- The agent key is the secp256k1 key whose address you registered as your
+  agent. You hold it: Commertize never generates, receives, keeps, recovers
+  or co-signs it.
+- `wallet key import` reads the key (`0x` + 64 hex) from stdin only, never
+  from an argument or the environment, checks it is a valid secp256k1 key,
+  derives its address, and stores it create-only in the OS keychain (an
+  existing key is never replaced). If an active agent is set
+  (`agents --use`), the key's address must be that agent's, or nothing is
+  stored. The key is never printed; `wallet key status` shows its address.
+  Remove it with `commertize-agent configure --clear COMMERTIZE_AGENT_KEY`.
+- This release signs nothing with the agent key. `wallet sign-typed-data`
+  reads the payload, says what it is, and refuses it (exit 4, `signed:
+  false`), without reading the key:
+  - "CAS Mandate" typed data is signed by the person you act for, never by
+    the agent: `hand_back.reason: "mandate_request"`, to their dashboard;
+  - Permit2 and EIP-2612 permits move value, and payments are Not open:
+    `payments_not_open`;
+  - anything else is not on the list the agent key may sign, which is
+    empty in this release: `typed_data_not_allowlisted`.
+- CAS receipts are not typed data: they are signed over `"CAS-v0.1\n"` +
+  the record hash. The CAS v0.1 receipt spec publishes no secp256k1 test
+  vectors, so the kit signs receipts with ed25519 only.

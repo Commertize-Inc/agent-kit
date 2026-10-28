@@ -79,6 +79,10 @@ export const HAND_BACK = {
 	mandate_request: P("/mandates/new"),
 	mandate_change: P("/mandates"),
 	signer_exists: A,
+	agent_key_exists: A,
+	// Typed data the agent key will not sign (the allowed list is empty in this release).
+	typed_data_not_allowlisted: A,
+	payments_not_open: A,
 	agent_not_found: P("/agents"),
 	no_active_agent: A,
 	skill_drift: A,

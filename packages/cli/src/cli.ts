@@ -21,6 +21,7 @@ import { checkProfileName, readActiveAgent, writeActiveAgent, type ActiveAgent }
 import { balance, isNetwork, NETWORKS, TOKENS, type Token } from "./chain.ts";
 import { signerInit, signerStatus, SignerExistsError } from "./signer.ts";
 import { mandateRevoke } from "./mandate.ts";
+import { AgentKeyExistsError, agentKeyStatus, classifyTypedData, importAgentKey, readTypedDataFile } from "./agentkey.ts";
 import { homedir } from "node:os";
 
 /** No agent was named and no profile has one set. */
@@ -100,6 +101,12 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent wallet address [--agent 0x...] [--profile name]
   commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH] [--agent 0x...]
                                              read-only balance on Base (no key, no signing)
+  commertize-agent wallet key import --stdin | status
+                                             your agent's own key, from stdin only, into the OS
+                                             keychain (create-only; must match the active agent)
+  commertize-agent wallet sign-typed-data --file <typed-data.json>
+                                             signs nothing in this release: the allowed list is
+                                             empty (exit 4); a CAS mandate goes to the person
   commertize-agent events listen [--interval s] [--once] [filters]
                                              Work board changes as they happen (polls, floor 15 s);
                                              with --json, one event object per line (NDJSON)
@@ -279,6 +286,15 @@ function errorResult(command: string, e: unknown): Result {
 			error: { code: "source_changed", message: e.message },
 			next_step: "Drain with a new --consumer name",
 			hand_back: handBack("drain_source_changed"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof AgentKeyExistsError)
+		return {
+			command,
+			exit_code: EXIT.error,
+			error: { code: "config", message: e.message },
+			next_step: "commertize-agent wallet key status --json",
+			hand_back: handBack("agent_key_exists"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	if (e instanceof SignerExistsError)
@@ -959,6 +975,55 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 					(c) => `  ${textSafe(c.result)}  ${textSafe(c.checkId ?? "(no check id)")}  ${textSafe(c.checkedAt ?? "(no date)")}  policy ${textSafe(c.policyVersion ?? "(none)")}`
 				),
 			],
+		};
+	}
+	if (cmd === "wallet" && rest[0] === "key") {
+		const { values, positionals } = parse(rest.slice(1), { stdin: { type: "boolean" }, profile: { type: "string" } }, true);
+		const sub = positionals[0];
+		if (positionals.length !== 1 || (sub !== "import" && sub !== "status")) throw new UsageError("wallet key needs exactly: import --stdin, or status");
+		if (sub === "status") {
+			if (values.stdin !== undefined || values.profile !== undefined) throw new UsageError("wallet key status takes no flags");
+			const s = agentKeyStatus(kc);
+			return {
+				command: cmd,
+				exit_code: EXIT.ok,
+				data: s,
+				next_step: s.stored ? null : "Pipe your agent's private key: ... | commertize-agent wallet key import --stdin --json",
+				text: [s.stored ? `Agent key stored for ${s.address}` : "No agent key stored."],
+			};
+		}
+		// The key is read from stdin only: never argv (ps, shell history) and never the environment.
+		if (values.stdin !== true) throw new UsageError("wallet key import reads the key from stdin only: pass --stdin and pipe it in");
+		const active = activeAgent(values);
+		const read = deps.readStdin ?? readAllStdin;
+		const r = importAgentKey(kc, await read(), active?.agentAddress ?? null);
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: { stored: true, where: `OS keychain (${KEYCHAIN_SERVICE})`, address: r.address, matches_active_agent: r.matched },
+			next_step: r.matched === null ? `commertize-agent agents --use ${r.address} --json` : null,
+			text: [`Agent key stored for ${r.address}${r.matched ? " (matches the active agent)" : ""}. The key itself is never printed.`],
+		};
+	}
+	if (cmd === "wallet" && rest[0] === "sign-typed-data") {
+		const { values, positionals } = parse(rest.slice(1), { file: { type: "string" } }, true);
+		if (positionals.length || !values.file) throw new UsageError("wallet sign-typed-data needs exactly: --file <typed-data.json>");
+		const c = classifyTypedData(readTypedDataFile(values.file as string));
+		// The list of typed-data domains the agent key may sign is empty in this release: everything is refused, nothing is signed.
+		const [reason, message]: [Reason, string] =
+			c.class === "cas_mandate"
+				? ["mandate_request", "a CAS mandate is signed by the person you act for, never by the agent"]
+				: c.class === "permit"
+					? ["payments_not_open", "a permit moves value; payments are Not open in this kit"]
+					: ["typed_data_not_allowlisted", "this typed data is not on the list the agent key may sign (the list is empty in this release)"];
+		return {
+			command: cmd,
+			exit_code: EXIT.not_open,
+			data: { signed: false, class: c.class, domainName: c.domainName, primaryType: c.primaryType },
+			error: { code: "not_open", message },
+			next_step: c.class === "cas_mandate" ? "Show the person hand_back.url: they sign their own mandate" : null,
+			hand_back: handBack(reason),
+			textErr: [`commertize-agent: not signed: ${message}`],
 		};
 	}
 	if (cmd === "wallet") {

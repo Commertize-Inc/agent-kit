@@ -155,6 +155,10 @@ commertize-agent signer status --json
 - `signer init` keeps a device key in the OS keychain; never print or copy
   it. It is an attestation key only, never a payment or mandate signer.
   `signer link` is Not open (exit 4).
+- `wallet key import --stdin` stores the agent's own key (piped in by the
+  person; never type it as an argument). `wallet sign-typed-data` signs
+  nothing in this release: it tells you what the payload is and refuses it.
+  Never try to get a mandate or a permit signed another way.
 
 ## Templates
 
