@@ -133,3 +133,55 @@ test("events drain via the CLI: JSON result; usage errors for missing --file and
 	for (const argv of [["events", "drain"], ["events", "drain", "--file", f, "--limit", "0"], ["events", "drain", "--file", f, "--limit", "1001"], ["events", "drain", "--file", f, "--key", "a b"]])
 		assert.equal(await main([...argv, "--json"], () => {}, () => {}), EXIT.usage, argv.join(" "));
 });
+
+// --- round 3 (audit LOW-1..LOW-4) -------------------------------------------------
+
+test("drain: a symlink planted at the old predictable temp path is never written through; the cursor stays a regular file", async () => {
+	const { lstatSync, symlinkSync } = await import("node:fs");
+	const f = file([E(1), E(2)]);
+	const victim = join(mkdtempSync(join(tmpdir(), "kit-victim-")), "victim.txt");
+	writeFileSync(victim, "untouched\n");
+	symlinkSync(victim, `${cursorPath(f, "default")}.tmp-${process.pid}`);
+	assert.deepEqual(drain({ file: f }).events.map((e) => e.seq), [1, 2]);
+	assert.equal(readFileSync(victim, "utf8"), "untouched\n");
+	assert.equal(lstatSync(cursorPath(f, "default")).isSymbolicLink(), false);
+	assert.equal(JSON.parse(readFileSync(cursorPath(f, "default"), "utf8")).offset, readFileSync(f).length);
+});
+
+test("drain: a FIFO --file is refused at once (usage, exit 2), never opened", async () => {
+	const { spawnSync } = await import("node:child_process");
+	const fifo = join(mkdtempSync(join(tmpdir(), "kit-fifo-")), "events.ndjson");
+	assert.equal(spawnSync("mkfifo", [fifo]).status, 0);
+	assert.throws(() => drain({ file: fifo }), /not a regular file/);
+	const out: string[] = [];
+	assert.equal(await main(["events", "drain", "--file", fifo, "--json"], (l) => out.push(l), () => {}), EXIT.usage);
+	assert.equal(JSON.parse(out[0]!).hand_back.reason, "usage");
+});
+
+test("drain: one drain reads at most 8 MiB past the cursor; the rest waits for the next drain", () => {
+	const dir = mkdtempSync(join(tmpdir(), "kit-drain-cap-"));
+	const f = join(dir, "e.ndjson");
+	const junk = "x".repeat(1023) + "\n"; // 1 KiB lines that are not kit events
+	writeFileSync(f, junk.repeat(9 * 1024) + JSON.stringify(E(1)) + "\n");
+	const a = drain({ file: f });
+	assert.deepEqual(a.events, [], "the event past the 8 MiB window is not reached in one drain");
+	assert.ok(a.offset <= 8 * 1024 * 1024, `offset ${a.offset}`);
+	assert.equal(a.more, true);
+	const b = drain({ file: f });
+	assert.deepEqual(b.events.map((e) => e.seq), [1]);
+});
+
+test("drain: a single line longer than 8 MiB is refused, not taken", () => {
+	const dir = mkdtempSync(join(tmpdir(), "kit-drain-long-"));
+	const f = join(dir, "e.ndjson");
+	writeFileSync(f, "y".repeat(8 * 1024 * 1024 + 10) + "\n");
+	assert.throws(() => drain({ file: f }), DrainSourceChangedError);
+});
+
+test("drain busy: next_step names the stale-lock recovery section", async () => {
+	const f = file([E(1)]);
+	writeFileSync(`${cursorPath(f, "default")}.lock`, String(process.pid));
+	const out: string[] = [];
+	assert.equal(await main(["events", "drain", "--file", f, "--json"], (l) => out.push(l), () => {}), EXIT.busy);
+	assert.match(JSON.parse(out[0]!).next_step, /agent-loop\.md#a-lock-that-stays-busy/);
+});

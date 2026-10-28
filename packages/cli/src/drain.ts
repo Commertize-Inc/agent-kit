@@ -8,9 +8,11 @@
  * Each consumer keeps a cursor next to the file (`<file>.<consumer>.cursor`):
  * the byte offset it has acknowledged. One drain takes the next batch of
  * complete lines after that offset, moves the cursor past them (an atomic
- * rename), and only then returns them. Two drains of the same consumer can
- * never return the same line: a lock file makes them take turns, and a
- * second drain while one runs exits 9 (busy).
+ * rename), and only then returns them. A lock file makes two drains of the
+ * same consumer take turns, and a second drain while one runs exits 9
+ * (busy). One known window remains: two drains that both find a dead
+ * holder's lock at the same instant can both take it over and return the
+ * same lines. Run one drainer per consumer.
  *
  * Retry safety: pass `--key K`. The cursor remembers the last batch and its
  * key. A drain with the same key (and the same filters and limit) returns
@@ -25,8 +27,8 @@
  * consumer name for each filter set.
  */
 
-import { createHash } from "node:crypto";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { EVENT_SCHEMA, matchesFilter, type EventFilter, type KitEvent } from "./events.ts";
 
 export const DRAIN_LIMIT_DEFAULT = 100;
@@ -150,8 +152,9 @@ function readCursor(path: string): Cursor | null {
 }
 
 function writeCursor(path: string, c: Cursor): void {
-	const tmp = `${path}.tmp-${process.pid}`;
-	writeFileSync(tmp, JSON.stringify(c) + "\n", { mode: 0o600 });
+	// Exclusive create with an unpredictable name: a symlink planted at the temp path is never written through.
+	const tmp = `${path}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
+	writeFileSync(tmp, JSON.stringify(c) + "\n", { mode: 0o600, flag: "wx" });
 	renameSync(tmp, path);
 }
 
@@ -189,6 +192,8 @@ export function drain(o: DrainOptions): DrainResult {
 	const cpath = cursorPath(o.file, consumer);
 	const unlock = lock(`${cpath}.lock`);
 	try {
+		// Refuse a FIFO, socket or device before opening: opening a FIFO for read blocks forever.
+		if (!statSync(o.file).isFile()) throw new DrainUsageError(`${o.file} is not a regular file`);
 		const fd = openSync(o.file, "r");
 		try {
 			const st = fstatSync(fd);
