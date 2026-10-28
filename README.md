@@ -75,7 +75,7 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 
 ## From an agent loop
 
-Exit codes, the `hand_back` on every refusal, `availableTools` on every event line, event filters and `events drain`: see [docs/agent-loop.md](docs/agent-loop.md). The loopback event stream is `commertize-agent events serve`; the name `serve` is reserved for [your own handler as a paid endpoint](docs/serve-paid-endpoint.md), which is Not open.
+Exit codes, the `hand_back` on every refusal, `availableTools` on every event line, event filters and `events drain`: see [docs/agent-loop.md](docs/agent-loop.md). If every drain exits 9 after a reboot, a stale lock file is held by a process id that now belongs to something else; [docs/agent-loop.md](docs/agent-loop.md#a-lock-that-stays-busy) says how to clear it. The loopback event stream is `commertize-agent events serve`; the name `serve` is reserved for [your own handler as a paid endpoint](docs/serve-paid-endpoint.md), which is Not open.
 
 ## Through MCP
 

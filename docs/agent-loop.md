@@ -97,3 +97,18 @@ acknowledged for that consumer, so use one consumer name per filter set. If
 the file is truncated or replaced, the drain refuses (exit 1,
 `drain_source_changed`) instead of guessing; start a new consumer name.
 
+### A lock that stays busy
+
+While a drain runs it holds `<file>.<consumer>.cursor.lock`, which contains
+its process id. A lock left by a drain that died is taken over automatically
+when that process id no longer exists. After a reboot, the same number can
+belong to an unrelated live process, and then every drain exits 9. The kit
+does not guess in that case. To clear it:
+
+1. Make sure no `events drain` for that file and consumer is running
+   (`ps -p $(cat events.ndjson.default.cursor.lock)` shows what holds the id).
+2. Delete the lock file: `rm events.ndjson.default.cursor.lock`.
+
+The cursor itself is untouched, so the next drain continues where the last
+acknowledged batch ended.
+
