@@ -141,7 +141,8 @@ test("job watch: only that task; stops on a final state; and stops at once if al
 	assert.match(last.next_step, /job history a/);
 	// already final on the first read
 	const { f: f2, calls } = boardSeq([[T("z", "expired")], [T("z", "expired")]]);
-	assert.equal(await main(["job", "watch", "z", "--json"], () => {}, () => {}, { client: () => new CommertizeClient(ENV, f2), sleep: async () => {}, signals: false }), 0);
+	// K-1: an expired task ends the watch with its own exit code (11), not 0
+	assert.equal(await main(["job", "watch", "z", "--json"], () => {}, () => {}, { client: () => new CommertizeClient(ENV, f2), sleep: async () => {}, signals: false }), 11);
 	assert.equal(calls.length, 1);
 });
 
@@ -168,7 +169,7 @@ test("events listen --json --once: NDJSON events then one result envelope; text 
 });
 
 test("events/job/serve: bad flags are usage errors", async () => {
-	for (const argv of [["events"], ["events", "tail"], ["job"], ["job", "watch"], ["job", "history", "a"], ["events", "listen", "--interval", "5"], ["serve", "--port", "80"], ["serve", "--port", "x"], ["events", "listen", "--port", "9000"]])
+	for (const argv of [["events"], ["events", "tail"], ["job"], ["job", "watch"], ["job", "history", "a"], ["events", "listen", "--interval", "5"], ["events", "serve", "--port", "80"], ["events", "serve", "--port", "x"], ["events", "listen", "--port", "9000"]])
 		assert.equal(await main([...argv, "--json"], () => {}, () => {}, { signals: false }), 2, argv.join(" "));
 });
 
@@ -235,7 +236,7 @@ test("serve: binds 127.0.0.1 only", async () => {
 	const { f } = boardSeq([[]]);
 	const seen: { port: number; host: string }[] = [];
 	const errs: string[] = [];
-	const code = await main(["serve", "--port", "9123", "--once", "--json"], () => {}, (l) => errs.push(l), {
+	const code = await main(["events", "serve", "--port", "9123", "--once", "--json"], () => {}, (l) => errs.push(l), {
 		client: () => new CommertizeClient(ENV, f),
 		signals: false,
 		listenServer: async (_h, port, host) => (seen.push({ port, host }), { close: async () => {} }),
@@ -258,7 +259,7 @@ test("serve: Host must be this loopback address and port (DNS rebinding); any Or
 test("serve: /events is NDJSON, replays recent events, fans out, caps clients", () => {
 	const hub = new EventHub();
 	const h = makeHandler(hub, 9123, () => ({}));
-	const e1: KitEvent = { schema: EVENT_SCHEMA, seq: 1, ts: "t", type: "stream.started", data: {} };
+	const e1: KitEvent = { schema: EVENT_SCHEMA, seq: 1, ts: "t", type: "stream.started", data: {}, availableTools: ["routes"] };
 	hub.publish(e1);
 	const a = call(h, req("/events", { host: HP }));
 	assert.equal(a.status, 200);
