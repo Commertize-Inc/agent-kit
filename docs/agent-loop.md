@@ -157,6 +157,10 @@ commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH]
 - `whoami`, `identity show` and `wallet` use the active agent when you pass
   no `--agent`. With neither, they exit 16 (`hand_back.reason:
   "no_active_agent"`) before any network call.
+- `wallet address` is local: it prints the address recorded by `agents --use`
+  (or the one you pass) and makes no network call, so it carries no KYA
+  status. Revocation is checked by `whoami` and `identity show`, which read
+  the server every time; `wallet address` does not check it.
 - `identity show` reads the agent's passport and its KYA check record. If the
   check record is switched off on the deployment (it answers 404), `checks`
   is `null` with a note: it is never reported as an empty list.

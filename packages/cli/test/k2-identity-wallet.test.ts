@@ -167,6 +167,8 @@ test("wallet address: from --agent or the active profile; local only", async () 
 	const a = await run(["wallet", "address"], {}, { home: u.home });
 	assert.equal(a.code, 0);
 	assert.deepEqual(a.o.data, { address: A1, source: "profile", passportId: P1 });
+	// decision 2026-10-28: wallet address is local and never states a KYA status (revocation is whoami / identity show)
+	assert.doesNotMatch(a.raw, /kya/i);
 	assert.equal(a.calls.length, 0);
 	assert.equal((await run(["wallet", "address", "--agent", A2], {})).o.data.address, A2);
 });
