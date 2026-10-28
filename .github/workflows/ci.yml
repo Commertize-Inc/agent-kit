@@ -1,9 +1,13 @@
 # CI for the Commertize Agent Kit.
 #
 # Typecheck, the node:test suites (including the CAS conformance test every
-# template must pass) and the wording guard. Hermetic: tests use an in-process
-# fake fetch, no network. No secrets, no deploy, read-only token. Actions pinned
-# by full commit SHA (same pins as Commertize-Inc/mcp-server).
+# template must pass) and the wording guard. The suites use an in-process fake
+# fetch, with one exception: the receipt signature vectors are fetched from
+# Commertize-Inc/cas-spec at a pinned commit and checked against a sha256
+# integrity pin (they are never committed here). That fetch has its own step so
+# a network or pin failure is visible; the vector tests then fail, never skip.
+# No secrets, no deploy, read-only token. Actions pinned by full commit SHA
+# (same pins as Commertize-Inc/mcp-server).
 name: CI
 
 on:
@@ -43,6 +47,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Receipt vectors (network, pinned commit + sha256)
+        run: node --experimental-strip-types packages/cli/test/receipt-fixture.ts
 
       - name: Test
         run: npm test

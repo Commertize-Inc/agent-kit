@@ -1,0 +1,7 @@
+{
+	"source": "Commertize-Inc/cas-spec conformance/vectors/cas-1.0-receipt-secp256k1.json",
+	"commit": "dc1df9040364a065b01fcfb88afb290c6d43e3ee",
+	"url": "https://raw.githubusercontent.com/Commertize-Inc/cas-spec/dc1df9040364a065b01fcfb88afb290c6d43e3ee/conformance/vectors/cas-1.0-receipt-secp256k1.json",
+	"integrity": "sha256-THbikTUCS9YuhJULo+y2iYsm2rC3oH1f4MOCrKIqlPY=",
+	"seed": "cas-1.0-receipt-secp256k1/conformance-vectors/seed-1"
+}

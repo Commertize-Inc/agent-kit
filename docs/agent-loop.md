@@ -247,5 +247,70 @@ commertize-agent wallet sign-typed-data --file typed-data.json --json   # exit 4
   - anything else is not on the list the agent key may sign, which is
     empty in this release: `typed_data_not_allowlisted`.
 - CAS receipts are not typed data: they are signed over `"CAS-v0.1\n"` +
-  the record hash. The CAS v0.1 receipt spec publishes no secp256k1 test
-  vectors, so the kit signs receipts with ed25519 only.
+  the record hash, as below.
+
+## Receipts signed with the agent key
+
+```
+commertize-agent receipt test-sign --json
+COMMERTIZE_RECEIPT_SIGNER=agent-key  (when running a template)
+```
+
+- The kit signs CAS receipts with the agent key as CAS-1 section 5.1.1
+  defines: the message `"CAS-v0.1\n"` + the receipt hash (80 bytes), its
+  EIP-191 digest, a 65-byte `r || s || v` signature (low `s`, `v` 27 or 28,
+  RFC 6979 nonce), `alg: "secp256k1"`, and `key_id` = the agent address in
+  lowercase. It reproduces every valid conformance vector of
+  Commertize-Inc/cas-spec byte for byte.
+- The receipt log signs only hashes it computed: it builds the record,
+  computes its hash, and only then signs, and its signer is a private
+  field that no caller can reach. No exported command or library function
+  signs a hash, a message or typed data handed to it. This is not a key
+  boundary: under the same-user model the raw key stays reachable
+  in-process (and by any process running as you) through the OS keychain.
+  Every signature is checked by recovering its signer before it is used.
+- `receipt test-sign` signs one self-test receipt and shows that it
+  recovers to the key's address. Templates sign with the agent key when
+  `COMMERTIZE_RECEIPT_SIGNER=agent-key` is set; the default stays ed25519
+  with `COMMERTIZE_AGENT_SEED`.
+- **Signing is off by default.** The first time the kit sets up
+  `~/.commertize` (`configure`, a template run, `receipt test-sign`) it
+  creates `~/.commertize/DISABLED`. The person turns signing on with
+  `commertize-agent receipt enable-signing --confirm`; anyone can turn it
+  off again with `receipt disable-signing`. An agent never enables it.
+- **Kill switch.** While `~/.commertize/DISABLED` exists, or its state
+  cannot be read, the kit signs nothing with either key (ed25519 or the
+  agent key) and sends no write (non-GET) call: `receipt test-sign` exits
+  19 (`hand_back.reason: "disabled"`, with the enable command for the
+  person), a template run stops before it starts, and a running template
+  stops at its next signature or write. It is checked at run start (both
+  modes), before the keychain is read, before every signature and before
+  every write call.
+- **What it gates.** The kill file gates signing and template runs,
+  including every write a template sends. It does not gate the CLI's
+  own commands that send a write: `register` (registration and pairing
+  setup) still sends its write with the kill file present, and
+  `mandate revoke` is left ungated on purpose, because revoking is itself
+  a stop and must always work.
+- **Upgrading.** Existing ed25519 template users: after this release a
+  run stops with exit 19 until the person runs
+  `commertize-agent receipt enable-signing --confirm` once on that machine.
+- **The kill file is a cooperative stop.** It stops this kit; it cannot
+  stop other code running as you. The real stop for an agent is on the
+  server side: freeze its credential or account, or revoke its mandate.
+
+## Anchoring and write routes (planned, not in this release)
+
+- `CAS_ANCHOR_V1` is pinned to `null` today: there is no anchor contract,
+  so no receipt carries an anchor and none can be anchored.
+- Planned: batch anchoring of receipt hashes every 24 hours or every 500
+  receipts, whichever comes first. The cadence is a working figure; it has
+  not been checked against gas cost.
+- Planned rule for write routes when they open: the kit records and signs
+  the receipt before it sends the write, and sends the write with an
+  idempotency key derived from that receipt, so a retry cannot apply twice.
+- **Phishing.** A signature over `"CAS-v0.1\n"` + a hash is a valid receipt
+  for whatever record has that hash. Configure the wallet or signer that
+  holds the agent key to refuse any message that starts with `CAS-v0.1`
+  unless the kit asks, and never sign such a message for anyone else: a
+  signature obtained that way is a valid receipt for an attacker's record.

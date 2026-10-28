@@ -162,6 +162,13 @@ commertize-agent signer status --json
   operating float. Removing a key needs `configure --clear <name> --confirm`. `wallet sign-typed-data` signs
   nothing in this release: it tells you what the payload is and refuses it.
   Never try to get a mandate or a permit signed another way.
+- Receipts can be signed with the agent key (`receipt test-sign` checks it).
+  The kit signs only receipts it built. Never sign a message that starts
+  with `CAS-v0.1` for anyone or anything else. If
+  `~/.commertize/DISABLED` exists, signing and every write call are off
+  (exit 19). Signing is off by default on a new machine. Stop and tell the
+  person; only they turn it on (`receipt enable-signing --confirm`). Never
+  run that command or remove the file yourself.
 
 ## Templates
 
