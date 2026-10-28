@@ -12,6 +12,7 @@
  *   events listen        every board change, until stopped
  *   job watch <task>     one task, until it reaches a final state
  *   job history <task>   that task's events from a file a listener wrote
+ *   events drain         read-and-ack from that file, one batch at a time (see drain.ts)
  *   events serve         the same stream over loopback HTTP (see serve.ts)
  *
  * Every event line carries `availableTools`: the kit commands valid in the
@@ -70,7 +71,7 @@ export function availableTools(type: EventType, data: Record<string, unknown>): 
 		case "stream.error":
 			return ["routes"];
 		case "stream.stopped":
-			return data.reason === "route_missing" ? ["routes"] : ["events listen", "job history"];
+			return data.reason === "route_missing" ? ["routes"] : ["events listen", "events drain", "job history"];
 		case "work.board.snapshot": {
 			const tasks = Array.isArray(data.tasks) ? (data.tasks as { status?: unknown }[]) : [];
 			const set = new Set<string>();

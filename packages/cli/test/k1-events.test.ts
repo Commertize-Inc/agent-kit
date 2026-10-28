@@ -57,7 +57,7 @@ test("availableTools: stream lines", () => {
 	assert.deepEqual(availableTools("stream.started", {}), ["routes"]);
 	assert.deepEqual(availableTools("stream.error", {}), ["routes"]);
 	assert.deepEqual(availableTools("stream.stopped", { reason: "route_missing" }), ["routes"]);
-	assert.deepEqual(availableTools("stream.stopped", { reason: "max_polls" }), ["events listen", "job history"]);
+	assert.deepEqual(availableTools("stream.stopped", { reason: "max_polls" }), ["events listen", "events drain", "job history"]);
 	for (const t of EVENT_TYPES) assert.ok(Array.isArray(availableTools(t, {})), t);
 });
 
@@ -66,7 +66,7 @@ test("availableTools: every line events listen --json prints carries it, and eve
 	assert.equal(r.code, 0);
 	const events = r.lines.filter((l) => l.schema === EVENT_SCHEMA);
 	assert.ok(events.length >= 6);
-	const real = new Set(["routes", "events listen", "job watch", "job history"]);
+	const real = new Set(["routes", "events listen", "events drain", "job watch", "job history"]);
 	for (const e of events) {
 		assert.ok(Array.isArray(e.availableTools), JSON.stringify(e));
 		for (const c of e.availableTools) assert.ok(real.has(c), c);

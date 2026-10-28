@@ -25,7 +25,7 @@ It ships inside the npm package and prints with `commertize-agent skill print`.
    - 3 registered; the task mandate route is Not open
    - 4 Not open on the public API (a route, or the `serve` command); nothing was sent
    - 5 pending (sign-in, or a watched task still open), 6 sign-in denied,
-     7 sign-in expired, 8 wait timed out
+     7 sign-in expired, 8 wait timed out, 9 busy (another drain is running)
    - `job watch`: 0 completed, 10 rejected, 11 expired, 12 cancelled,
      13 closed, 14 left the board
    - 130 stopped by a signal
@@ -104,7 +104,11 @@ commertize-agent job history <taskId> --from events.ndjson --json
 - `job history` reads that file back, filtered to one task.
 - Every event line has `availableTools`: the kit commands valid in the state
   it reports. Pick your next command from that list.
-- Filters for listen and serve: `--type <event type>`,
+- `commertize-agent events drain --file events.ndjson --limit 50 --key <k> --json`
+  takes the next batch from that file and acknowledges it in the same step.
+  If you crash before handling a batch, run the same command with the same
+  `--key` to get the same batch back; use a new key for the next batch.
+- Filters for listen, drain and serve: `--type <event type>`,
   `--since <ISO time>`, `--job <taskId>`.
 - `commertize-agent events serve --port 8787` offers the same stream at
   `/events` on 127.0.0.1 at that port, for a process that would rather connect.
