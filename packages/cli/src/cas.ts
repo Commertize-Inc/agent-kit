@@ -246,7 +246,8 @@ export interface ActionInput {
 export class ReceiptLog {
 	readonly receipts: Receipt[] = [];
 	private readonly ids: { mandateId: string; agentId: string; agentKeyId: string };
-	private readonly signer: Signer;
+	// A real private field (#): unreachable from outside the instance, unlike a TypeScript `private`.
+	readonly #signer: Signer;
 	private readonly now: () => Date;
 	constructor(
 		ids: { mandateId: string; agentId: string; agentKeyId: string },
@@ -255,7 +256,7 @@ export class ReceiptLog {
 	) {
 		for (const [k, v] of Object.entries(ids)) if (!ID.test(v)) throw new Error(`${k} is not a CAS id`);
 		this.ids = ids;
-		this.signer = signer;
+		this.#signer = signer;
 		this.now = now;
 	}
 
@@ -279,7 +280,7 @@ export class ReceiptLog {
 			...(a.blockedCheckId ? { blocked_check_id: a.blockedCheckId } : {}),
 		};
 		const hash = recordHash(body);
-		const sig = await this.signer(Buffer.from(SIGNING_PREFIX + hash, "utf8"));
+		const sig = await this.#signer(Buffer.from(SIGNING_PREFIX + hash, "utf8"));
 		const r: Receipt = { ...body, hash, signatures: [sig] };
 		const issues = validateReceipt(r);
 		if (issues.length) throw new Error(`receipt refused: ${issues.map((i) => `${i.rule} ${i.path} ${i.message}`).join("; ")}`);

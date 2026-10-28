@@ -22,7 +22,7 @@ import { balance, isNetwork, NETWORKS, TOKENS, type Token } from "./chain.ts";
 import { signerInit, signerStatus, SignerExistsError } from "./signer.ts";
 import { mandateRevoke } from "./mandate.ts";
 import { AgentKeyExistsError, agentKeyStatus, classifyTypedData, importAgentKey, readTypedDataFile } from "./agentkey.ts";
-import { agentKeyReceiptLog, assertNotDisabled, DisabledError, receiptDigest } from "./receiptsigner.ts";
+import { agentKeyReceiptLog, assertNotDisabled, disableSigning, DisabledError, enableSigning, ensureDefaultDisabled, receiptDigest } from "./receiptsigner.ts";
 import { recoverAddress } from "./secp256k1.ts";
 import { homedir } from "node:os";
 
@@ -299,7 +299,7 @@ function errorResult(command: string, e: unknown): Result {
 			command,
 			exit_code: EXIT.frozen,
 			error: { code: "config", message: e.message },
-			next_step: null,
+			next_step: "Stop and show the person hand_back.url: signing stays off until they enable it on this machine themselves. Never enable it yourself.",
 			hand_back: handBack("disabled"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
@@ -493,6 +493,15 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			confirm: { type: "boolean" },
 		});
 		if (values.confirm !== undefined && values.clear === undefined) throw new UsageError("--confirm goes with --clear");
+		// Signing is off by default: a fresh machine gets the kill file the first time the kit is configured.
+		ensureDefaultDisabled(home);
+		let signing: "on" | "off";
+		try {
+			assertNotDisabled(home);
+			signing = "on";
+		} catch {
+			signing = "off";
+		}
 		const modes = [values["session-token-stdin"], values["api-key-stdin"], values.clear !== undefined].filter(Boolean).length;
 		if (modes > 1) throw new UsageError("configure takes one of --session-token-stdin, --api-key-stdin, --clear NAME");
 		const envNext = "Use the environment instead: export COMMERTIZE_SESSION_TOKEN / COMMERTIZE_API_KEY in your own shell";
@@ -523,7 +532,7 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		return {
 			command: cmd,
 			exit_code: 0,
-			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, keys, action },
+			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, keys, action, signing },
 			next_step: stored.COMMERTIZE_SESSION_TOKEN || stored.COMMERTIZE_API_KEY ? "commertize-agent routes --json" : "commertize-agent auth start --json",
 			text: [
 				...(action ? [`configure: ${action}`] : []),
@@ -1002,11 +1011,27 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		};
 	}
 	if (cmd === "receipt") {
-		const { values, positionals } = parse(rest, { profile: { type: "string" } }, true);
-		if (positionals.length !== 1 || positionals[0] !== "test-sign") throw new UsageError("receipt needs exactly: test-sign");
-		// The kill file is checked first, before the keychain is touched (and again before the signature).
+		const { values, positionals } = parse(rest, { profile: { type: "string" }, confirm: { type: "boolean" } }, true);
+		const sub = positionals[0];
+		if (positionals.length !== 1 || (sub !== "test-sign" && sub !== "enable-signing" && sub !== "disable-signing"))
+			throw new UsageError("receipt needs exactly: test-sign, enable-signing --confirm, or disable-signing");
+		if (sub === "disable-signing") {
+			if (values.confirm !== undefined || values.profile !== undefined) throw new UsageError("disable-signing takes no flags");
+			const d = disableSigning(home);
+			return { command: cmd, exit_code: EXIT.ok, data: { disabled: true, ...d }, next_step: null, text: [`Signing is off (${d.path}).`] };
+		}
+		if (sub === "enable-signing") {
+			// The person's deliberate step. An agent never runs this (SKILL.md); --confirm is required.
+			if (values.confirm !== true) throw new UsageError("enable-signing turns kit signing on for this machine: the person runs it with --confirm");
+			const en = enableSigning(home);
+			return { command: cmd, exit_code: EXIT.ok, data: { enabled: true, killFile: en.path }, next_step: null, text: [`Signing is on for this machine. To turn it off: commertize-agent receipt disable-signing`] };
+		}
+		if (values.confirm !== undefined) throw new UsageError("--confirm goes with enable-signing");
+		// The kill file is checked first, before the profile or the keychain is touched (and again before the signature).
+		ensureDefaultDisabled(home);
 		assertNotDisabled(home);
 		const active = activeAgent(values);
+		if (!active) err("commertize-agent: warning: no active agent is set (agents --use): receipts signed with this key cannot verify until its address is a registered agent's.");
 		const log = agentKeyReceiptLog({ mandateId: "kit-self-test", agentId: active?.passportId ?? "kit-self-test" }, { keychain: kc, home });
 		const r = await log.record({ verb: "check", objectRef: "kit:receipt-self-test", evidence: { purpose: "agent key self-test" } });
 		const sig = r.signatures[0]!;

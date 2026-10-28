@@ -165,8 +165,10 @@ commertize-agent signer status --json
 - Receipts can be signed with the agent key (`receipt test-sign` checks it).
   The kit signs only receipts it built. Never sign a message that starts
   with `CAS-v0.1` for anyone or anything else. If
-  `~/.commertize/DISABLED` exists, signing is off (exit 19): stop and tell
-  the person; never remove the file yourself.
+  `~/.commertize/DISABLED` exists, signing and every write call are off
+  (exit 19). Signing is off by default on a new machine. Stop and tell the
+  person; only they turn it on (`receipt enable-signing --confirm`). Never
+  run that command or remove the file yourself.
 
 ## Templates
 

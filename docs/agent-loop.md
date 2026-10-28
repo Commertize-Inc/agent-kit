@@ -262,19 +262,44 @@ COMMERTIZE_RECEIPT_SIGNER=agent-key  (when running a template)
   RFC 6979 nonce), `alg: "secp256k1"`, and `key_id` = the agent address in
   lowercase. It reproduces every valid conformance vector of
   Commertize-Inc/cas-spec byte for byte.
-- It signs only receipts it built itself: the receipt log builds the
-  record, computes its hash, and only then signs. No command or library
-  function signs a hash, a message or typed data handed to it. Every
-  signature is checked by recovering its signer before it is used.
+- The receipt log signs only hashes it computed: it builds the record,
+  computes its hash, and only then signs, and its signer is a private
+  field that no caller can reach. No exported command or library function
+  signs a hash, a message or typed data handed to it. This is not a key
+  boundary: under the same-user model the raw key stays reachable
+  in-process (and by any process running as you) through the OS keychain.
+  Every signature is checked by recovering its signer before it is used.
 - `receipt test-sign` signs one self-test receipt and shows that it
   recovers to the key's address. Templates sign with the agent key when
   `COMMERTIZE_RECEIPT_SIGNER=agent-key` is set; the default stays ed25519
   with `COMMERTIZE_AGENT_SEED`.
-- **Kill switch.** If `~/.commertize/DISABLED` exists, nothing is signed:
-  `receipt test-sign` exits 19 (`hand_back.reason: "disabled"`), and a
-  running template stops at its next receipt. The file is checked before
-  the keychain is read and again before every signature; if its state
-  cannot be read, signing stays off. Only the person removes it.
+- **Signing is off by default.** The first time the kit sets up
+  `~/.commertize` (`configure`, a template run, `receipt test-sign`) it
+  creates `~/.commertize/DISABLED`. The person turns signing on with
+  `commertize-agent receipt enable-signing --confirm`; anyone can turn it
+  off again with `receipt disable-signing`. An agent never enables it.
+- **Kill switch.** While `~/.commertize/DISABLED` exists, or its state
+  cannot be read, the kit signs nothing with either key (ed25519 or the
+  agent key) and sends no write (non-GET) call: `receipt test-sign` exits
+  19 (`hand_back.reason: "disabled"`, with the enable command for the
+  person), a template run stops before it starts, and a running template
+  stops at its next signature or write. It is checked at run start (both
+  modes), before the keychain is read, before every signature and before
+  every write call.
+- **The kill file is a cooperative stop.** It stops this kit; it cannot
+  stop other code running as you. The real stop for an agent is on the
+  server side: freeze its credential or account, or revoke its mandate.
+
+## Anchoring and write routes (planned, not in this release)
+
+- `CAS_ANCHOR_V1` is pinned to `null` today: there is no anchor contract,
+  so no receipt carries an anchor and none can be anchored.
+- Planned: batch anchoring of receipt hashes every 24 hours or every 500
+  receipts, whichever comes first. The cadence is a working figure; it has
+  not been checked against gas cost.
+- Planned rule for write routes when they open: the kit records and signs
+  the receipt before it sends the write, and sends the write with an
+  idempotency key derived from that receipt, so a retry cannot apply twice.
 - **Phishing.** A signature over `"CAS-v0.1\n"` + a hash is a valid receipt
   for whatever record has that hash. Configure the wallet or signer that
   holds the agent key to refuse any message that starts with `CAS-v0.1`
