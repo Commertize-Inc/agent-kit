@@ -314,3 +314,36 @@ test("agents: malformed rows are left out and counted (data.dropped_rows, whoami
 	const w = await run(["whoami"], { api: () => ({ body }) });
 	assert.equal(w.o.data.agents_dropped_rows, 2);
 });
+
+// --- cross-review C1-C3 ------------------------------------------------------------
+
+test("configure --clear is three-state: a locked keychain (36) stops, never reports 'was not stored'", async () => {
+	const locked: Runner = (args) => (args[0] === "delete-generic-password" ? { status: 36, stdout: "" } : { status: 44, stdout: "" });
+	const r = await run(["configure", "--clear", SIGNER_KEY], { kc: osKeychain(locked, () => true) });
+	assert.equal(r.code, 1);
+	assert.match(r.o.error.message, /did not answer .*exit 36/);
+	assert.doesNotMatch(r.raw, /was not stored/);
+	const absent: Runner = () => ({ status: 44, stdout: "" });
+	const a = await run(["configure", "--clear", SIGNER_KEY], { kc: osKeychain(absent, () => true) });
+	assert.equal(a.code, 0);
+	assert.equal(a.o.data.action, `${SIGNER_KEY} was not stored`);
+});
+
+test("set() never writes a key item: it replaces existing items, so the signer key is create-only", () => {
+	const calls: string[][] = [];
+	const kc = osKeychain((args) => (calls.push(args), { status: 0, stdout: "" }), () => true);
+	const v = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "der", type: "pkcs8" }).toString("base64url");
+	assert.throws(() => kc.set(SIGNER_KEY, v), /created once and never replaced/);
+	assert.deepEqual(calls, [], "nothing reaches the keychain");
+	assert.doesNotThrow(() => kc.set("COMMERTIZE_API_KEY", "kc_apikey_0123456789"));
+});
+
+test("configure shows whether a signer key is stored, never its value", async () => {
+	const { kc, store } = memKeychain();
+	const before = await run(["configure"], { kc });
+	assert.equal(before.o.data.keys[SIGNER_KEY], false);
+	await run(["signer", "init"], { kc });
+	const after = await run(["configure"], { kc });
+	assert.equal(after.o.data.keys[SIGNER_KEY], true);
+	assert.ok(!after.raw.includes(store.get(SIGNER_KEY)!.slice(10, 50)));
+});

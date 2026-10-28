@@ -31,7 +31,7 @@ class NoActiveAgentError extends Error {
 		this.name = "NoActiveAgentError";
 	}
 }
-import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
+import { checkName, KEY_NAMES, KEYCHAIN_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
@@ -497,14 +497,18 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			action = `stored ${n}`;
 		}
 		const stored = Object.fromEntries(KEY_NAMES.map((n) => [n, kc.has(n)]));
+		// Key items (never their values): whether each is stored.
+		const keyNames = KEYCHAIN_NAMES.filter((n) => !(KEY_NAMES as readonly string[]).includes(n));
+		const keys = Object.fromEntries(keyNames.map((n) => [n, kc.has(n)]));
 		return {
 			command: cmd,
 			exit_code: 0,
-			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, action },
+			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, keys, action },
 			next_step: stored.COMMERTIZE_SESSION_TOKEN || stored.COMMERTIZE_API_KEY ? "commertize-agent routes --json" : "commertize-agent auth start --json",
 			text: [
 				...(action ? [`configure: ${action}`] : []),
 				...KEY_NAMES.map((n) => `${n.padEnd(26)} ${stored[n] ? "stored in the OS keychain" : "not stored"}`),
+				...keyNames.map((n) => `${n.padEnd(26)} ${keys[n] ? "key stored in the OS keychain (value never shown)" : "no key stored"}`),
 			],
 		};
 	}
