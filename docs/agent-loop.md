@@ -155,10 +155,18 @@ commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH]
   this kit did not write, or a symlinked directory or file on that path,
   stops the command instead of being followed.
 - `whoami`, `identity show` and `wallet` use the active agent when you pass
-  no `--agent`. With neither, they exit 16 (`hand_back.reason:
-  "no_active_agent"`) before any network call.
-- `identity show` reads the agent's passport and its KYA check record. If the
-  check record is switched off on the deployment (it answers 404), `checks`
+  no `--agent`. With neither, `identity show` and `wallet` exit 16
+  (`hand_back.reason: "no_active_agent"`) before any network call. `whoami`
+  still exits 0: it makes its one list call and shows `agent: null` unless
+  your account has exactly one agent.
+- `wallet address` is local: it prints the address recorded by `agents --use`
+  (or the one you pass) and makes no network call, so it carries no KYA
+  status. Revocation is checked by `whoami` and `identity show`, which read
+  the server every time; `wallet` does not check it.
+- `identity show` reads the agent's passport and its KYA check record. Every
+  check row is shown, including a failed one; a row without a result makes
+  the command refuse (exit 1) rather than hide it. If the check record
+  answers 404 (not available for this passport on this deployment), `checks`
   is `null` with a note: it is never reported as an empty list.
 - `wallet balance` reads Base over the public RPC endpoints
   (mainnet.base.org, sepolia.base.org). It checks the chain id before any

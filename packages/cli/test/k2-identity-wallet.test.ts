@@ -106,7 +106,7 @@ test("profile reads fail closed: a symlinked directory, a symlinked file or a fi
 
 // --- identity show ------------------------------------------------------------
 
-test("identity show: the passport and its KYA check rows (malformed rows dropped); the active profile is used when no --agent", async () => {
+test("identity show: the passport and every KYA check row (malformed rows kept with nulls); the active profile is used when no --agent", async () => {
 	const rows = [
 		{ id: "r1", checkId: "kya.sanctions", result: "pass", policyVersion: "1", checkedAt: "2026-10-27T00:00:00.000Z" },
 		{ id: "r2", checkId: 7, result: "pass" },
@@ -115,7 +115,7 @@ test("identity show: the passport and its KYA check rows (malformed rows dropped
 	const r = await run(["identity", "show", "--agent", A1], t);
 	assert.equal(r.code, 0);
 	assert.equal(r.o.data.passport.passportId, P1);
-	assert.deepEqual(r.o.data.checks, [rows[0]]);
+	assert.deepEqual(r.o.data.checks, [rows[0], { id: "r2", checkId: null, result: "pass", policyVersion: null, checkedAt: null }], "a malformed row is kept, never dropped");
 	assert.equal(r.o.data.checks_note, null);
 	assert.deepEqual(r.calls.map((c) => c.pathname), [AGENTS, `/kya/passports/${P1}/checks`]);
 	const u = await run(["agents", "--use", A1], t);
@@ -128,7 +128,7 @@ test("identity show: a switched-off check record (404) is reported as unavailabl
 	const off = await run(["identity", "show", "--agent", P1], { [AGENTS]: { body: page([agent(P1, A1)]) } });
 	assert.equal(off.code, 0);
 	assert.equal(off.o.data.checks, null);
-	assert.match(off.o.data.checks_note, /switched off/);
+	assert.match(off.o.data.checks_note, /not available for this passport on this deployment/);
 	const bad = await run(["identity", "show", "--agent", P1], { [AGENTS]: { body: page([agent(P1, A1)]) }, [`/kya/passports/${P1}/checks`]: { body: { checks: "all good" } } });
 	assert.equal(bad.code, 1);
 	assert.equal(bad.o.hand_back.reason, "api_error");
@@ -151,10 +151,10 @@ test("identity show / wallet: no --agent and no active profile is exit 16 with a
 // --- wallet -------------------------------------------------------------------
 
 function fakeRpc(answers: Record<string, unknown>) {
-	const seen: { url: string; method: string; params: unknown[] }[] = [];
+	const seen: { url: string; method: string; params: unknown[]; redirect?: string }[] = [];
 	const f = (async (input: unknown, init?: RequestInit) => {
 		const b = JSON.parse(String(init?.body));
-		seen.push({ url: String(input), method: b.method, params: b.params });
+		seen.push({ url: String(input), method: b.method, params: b.params, redirect: init?.redirect });
 		const a = answers[b.method];
 		return new Response(JSON.stringify(a === undefined ? { jsonrpc: "2.0", id: 1, error: { code: -32601 } } : { jsonrpc: "2.0", id: 1, result: a }), { status: 200 });
 	}) as typeof fetch;
@@ -167,6 +167,8 @@ test("wallet address: from --agent or the active profile; local only", async () 
 	const a = await run(["wallet", "address"], {}, { home: u.home });
 	assert.equal(a.code, 0);
 	assert.deepEqual(a.o.data, { address: A1, source: "profile", passportId: P1 });
+	// wallet address is local and never states a KYA status (revocation is whoami / identity show)
+	assert.doesNotMatch(a.raw, /kya/i);
 	assert.equal(a.calls.length, 0);
 	assert.equal((await run(["wallet", "address", "--agent", A2], {})).o.data.address, A2);
 });
@@ -225,4 +227,50 @@ test("wallet balance: an RPC answer carrying an error is refused even when it al
 	const r = await run(["wallet", "balance", "--agent", A1], {}, { rpc: f });
 	assert.equal(r.code, 1);
 	assert.equal(r.o.hand_back.reason, "api_error");
+});
+
+// --- review round 1: check rows kept, ids pattern-checked, redirect pinned ------
+
+test("identity show: a failed check with no date is shown as a fail, never dropped; a row with no result refuses the answer", async () => {
+	const base = { [AGENTS]: { body: page([agent(P1, A1)]) } };
+	const fail = await run(["identity", "show", "--agent", A1], { ...base, [`/kya/passports/${P1}/checks`]: { body: { checks: [{ id: "r9", checkId: "kya.sanctions", result: "fail", policyVersion: "1", checkedAt: null }] } } });
+	assert.equal(fail.code, 0);
+	assert.equal(fail.o.data.checks.length, 1);
+	assert.equal(fail.o.data.checks[0].result, "fail");
+	assert.equal(fail.o.data.checks[0].checkedAt, null);
+	const text: string[] = [];
+	const h = fail.home;
+	await main(["identity", "show", "--agent", A1], (l) => text.push(l), () => {}, {
+		client: () =>
+			new CommertizeClient(ENV, (async (i: unknown) => {
+				const p = new URL(String(i)).pathname;
+				return new Response(JSON.stringify(p === AGENTS ? page([agent(P1, A1)]) : { checks: [{ result: "fail", checkedAt: null }] }));
+			}) as typeof fetch),
+		home: h,
+		signals: false,
+	});
+	assert.match(text.join("\n"), /KYA checks: 1/);
+	assert.match(text.join("\n"), /fail .*\(no date\)/);
+	const noResult = await run(["identity", "show", "--agent", A1], { ...base, [`/kya/passports/${P1}/checks`]: { body: { checks: [{ id: "r1", checkId: "x", checkedAt: "2026-10-27T00:00:00Z" }] } } });
+	assert.equal(noResult.code, 1);
+	assert.match(noResult.o.error.message, /no result/);
+});
+
+test("agents list: a passport id that is not a UUID or an address that is not 0x+40 hex never reaches a URL", async () => {
+	const evil = [
+		{ passportId: "..", agentAddress: A1, kyaStatus: "active", mandates: [] },
+		{ passportId: P2, agentAddress: "0x" + "a".repeat(39) + "/", kyaStatus: "active", mandates: [] },
+	];
+	const r = await run(["identity", "show", "--agent", A1], { [AGENTS]: { body: page(evil) } });
+	assert.equal(r.code, 16);
+	assert.ok(r.calls.every((c) => c.pathname === AGENTS), r.calls.map((c) => c.pathname).join(","));
+	const l = await run(["agents"], { [AGENTS]: { body: page(evil) } });
+	assert.deepEqual(l.o.data.agents, []);
+});
+
+test("wallet balance: every RPC request is sent with redirect: error", async () => {
+	const { f, seen } = fakeRpc({ eth_chainId: "0x2105", eth_call: "0x" + "0".repeat(64) });
+	assert.equal((await run(["wallet", "balance", "--agent", A1], {}, { rpc: f })).code, 0);
+	assert.equal(seen.length, 2);
+	assert.ok(seen.every((s) => s.redirect === "error"));
 });

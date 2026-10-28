@@ -864,7 +864,9 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			text: [
 				`Agent ${textSafe(r.passport.agentAddress)} (${textSafe(r.passport.passportId)}), KYA ${textSafe(r.passport.kyaStatus)}`,
 				r.checks ? `KYA checks: ${r.checks.length}` : `KYA checks: ${r.checks_note}`,
-				...(r.checks ?? []).map((c) => `  ${textSafe(c.checkedAt)}  ${textSafe(c.checkId)}  ${textSafe(c.result)}  policy ${textSafe(c.policyVersion)}`),
+				...(r.checks ?? []).map(
+					(c) => `  ${textSafe(c.result)}  ${textSafe(c.checkId ?? "(no check id)")}  ${textSafe(c.checkedAt ?? "(no date)")}  policy ${textSafe(c.policyVersion ?? "(none)")}`
+				),
 			],
 		};
 	}
