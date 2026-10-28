@@ -234,7 +234,7 @@ function errorResult(command: string, e: unknown): Result {
 			command,
 			exit_code: EXIT.busy,
 			error: { code: "busy", message: e.message },
-			next_step: "Retry the same events drain command (with the same --key) after a short wait",
+			next_step: "Retry the same events drain command (with the same --key) after a short wait. If it stays busy and no drain is running, see https://github.com/Commertize-Inc/agent-kit/blob/main/docs/agent-loop.md#a-lock-that-stays-busy",
 			hand_back: handBack("busy"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
