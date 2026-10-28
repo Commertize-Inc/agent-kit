@@ -47,6 +47,15 @@ export const ROUTES = {
 		switchable: true,
 		note: "Lists the agents registered under your own account and their status.",
 	},
+	mandateRevoke: {
+		id: "mandateRevoke",
+		method: "POST",
+		path: "/mandates/principal/:mid/revoke",
+		auth: "session",
+		status: "live",
+		switchable: true,
+		note: "Ends one of your own mandates. Answers ok even when the mandate had already ended; the kit reads the mandate back.",
+	},
 	kyaChecks: {
 		id: "kyaChecks",
 		method: "GET",

@@ -19,6 +19,8 @@ import { skillCheck } from "./skillcheck.ts";
 import { findAgent, identityShow } from "./identity.ts";
 import { checkProfileName, readActiveAgent, writeActiveAgent, type ActiveAgent } from "./profile.ts";
 import { balance, isNetwork, NETWORKS, TOKENS, type Token } from "./chain.ts";
+import { signerInit, signerStatus, SignerExistsError } from "./signer.ts";
+import { mandateRevoke } from "./mandate.ts";
 import { homedir } from "node:os";
 
 /** No agent was named and no profile has one set. */
@@ -28,7 +30,7 @@ class NoActiveAgentError extends Error {
 		this.name = "NoActiveAgentError";
 	}
 }
-import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
+import { checkName, KEY_NAMES, KEYCHAIN_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
@@ -52,6 +54,7 @@ export const COMMANDS = [
 	"whoami",
 	"agents",
 	"mandate",
+	"signer",
 	"identity",
 	"wallet",
 	"events",
@@ -83,6 +86,15 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              make one of your active agents the one later
                                              commands act as (kept in ~/.commertize, no secret)
   commertize-agent mandate show <mandateId>  one of your mandates (read only)
+  commertize-agent mandate request | request-change
+                                             hand back to the person you act for: they create
+                                             or change and sign the mandate (exit 5); the kit
+                                             never writes or signs a mandate
+  commertize-agent mandate revoke <mandateId> --confirm | --dry-run
+                                             end one of your mandates; the state is read back
+  commertize-agent signer init | status | link
+                                             a P-256 device key in the OS keychain; linking it
+                                             to an agent is Not open (exit 4)
   commertize-agent identity show [--agent 0x...|passportId] [--profile name]
                                              that agent's passport and its KYA check record
   commertize-agent wallet address [--agent 0x...] [--profile name]
@@ -267,6 +279,15 @@ function errorResult(command: string, e: unknown): Result {
 			error: { code: "source_changed", message: e.message },
 			next_step: "Drain with a new --consumer name",
 			hand_back: handBack("drain_source_changed"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof SignerExistsError)
+		return {
+			command,
+			exit_code: EXIT.error,
+			error: { code: "config", message: e.message },
+			next_step: "commertize-agent signer status --json",
+			hand_back: handBack("signer_exists"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	if (e instanceof NoActiveAgentError)
@@ -460,14 +481,18 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			action = `stored ${n}`;
 		}
 		const stored = Object.fromEntries(KEY_NAMES.map((n) => [n, kc.has(n)]));
+		// Key items (never their values): whether each is stored.
+		const keyNames = KEYCHAIN_NAMES.filter((n) => !(KEY_NAMES as readonly string[]).includes(n));
+		const keys = Object.fromEntries(keyNames.map((n) => [n, kc.has(n)]));
 		return {
 			command: cmd,
 			exit_code: 0,
-			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, action },
+			data: { keychain_available: true, service: KEYCHAIN_SERVICE, stored, keys, action },
 			next_step: stored.COMMERTIZE_SESSION_TOKEN || stored.COMMERTIZE_API_KEY ? "commertize-agent routes --json" : "commertize-agent auth start --json",
 			text: [
 				...(action ? [`configure: ${action}`] : []),
 				...KEY_NAMES.map((n) => `${n.padEnd(26)} ${stored[n] ? "stored in the OS keychain" : "not stored"}`),
+				...keyNames.map((n) => `${n.padEnd(26)} ${keys[n] ? "key stored in the OS keychain (value never shown)" : "no key stored"}`),
 			],
 		};
 	}
@@ -831,14 +856,56 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			exit_code: EXIT.ok,
 			data: r,
 			next_step: r.next_cursor ? `commertize-agent agents --cursor ${r.next_cursor} --json` : null,
-			text: r.agents.length
+			text: (r.agents.length
 				? r.agents.map((x) => `${textSafe(x.agentAddress)}  ${textSafe(x.passportId)}  KYA ${textSafe(x.kyaStatus)}  mandates ${x.mandates.length}`)
-				: ["No agents under this account."],
+				: ["No agents under this account."]
+			).concat(r.dropped_rows ? [`(${r.dropped_rows} row(s) from the server were malformed and left out)`] : []),
 		};
 	}
 	if (cmd === "mandate") {
-		const { values, positionals } = parse(rest, { "allow-host": { type: "string" } }, true);
-		if (positionals.length !== 2 || positionals[0] !== "show") throw new UsageError("mandate needs exactly: show <mandateId>");
+		const { values, positionals } = parse(
+			rest,
+			{ "allow-host": { type: "string" }, confirm: { type: "boolean" }, "dry-run": { type: "boolean" } },
+			true
+		);
+		const sub = positionals[0];
+		if (sub === "request" || sub === "request-change") {
+			// No route carries a mandate request from an agent: the principal creates or changes it in the dashboard.
+			if (positionals.length !== 1 || values.confirm !== undefined || values["dry-run"] !== undefined || values["allow-host"] !== undefined)
+				throw new UsageError(`mandate ${sub} takes no arguments`);
+			const reason = sub === "request" ? "mandate_request" : "mandate_change";
+			const hb = handBack(reason);
+			return {
+				command: cmd,
+				exit_code: EXIT.pending,
+				data: { sent: false, by: "principal", url: hb.url },
+				next_step: `Show the person ${hb.url}: they ${sub === "request" ? "create" : "change"} and sign the mandate there. Then run: commertize-agent whoami --json`,
+				hand_back: hb,
+				text: [`The person you act for ${sub === "request" ? "creates" : "changes"} and signs the mandate at ${hb.url}. This kit never writes or signs a mandate.`],
+			};
+		}
+		if (sub === "revoke") {
+			if (positionals.length !== 2) throw new UsageError("mandate revoke needs exactly: <mandateId> --confirm (or --dry-run)");
+			if (!UUID.test(positionals[1]!)) throw new UsageError("mandate id is a UUID");
+			const dry = values["dry-run"] === true;
+			if (dry === (values.confirm === true)) throw new UsageError("revoking ends the mandate for good: pass --confirm, or --dry-run to see it first (not both)");
+			const r = await mandateRevoke(mkClient(values["allow-host"] as string | undefined, err), positionals[1]!, dry);
+			return {
+				command: cmd,
+				exit_code: EXIT.ok,
+				data: r,
+				next_step: dry && !r.already_ended ? `commertize-agent mandate revoke ${r.mandateId} --confirm --json` : null,
+				text: [
+					r.already_ended
+						? `Mandate ${r.mandateId} had already ended (${textSafe(r.before.status)}); nothing sent.`
+						: dry
+							? `Mandate ${r.mandateId} is ${textSafe(r.before.status)}; --confirm would end it.`
+							: `Mandate ${r.mandateId}: ${textSafe(r.before.status)} -> ${textSafe(r.after?.status)} (read back after the revoke).`,
+				],
+			};
+		}
+		if (values.confirm !== undefined || values["dry-run"] !== undefined) throw new UsageError("--confirm and --dry-run go with mandate revoke");
+		if (positionals.length !== 2 || sub !== "show") throw new UsageError("mandate needs: show <mandateId>, request, request-change, or revoke <mandateId>");
 		if (!UUID.test(positionals[1]!)) throw new UsageError("mandate id is a UUID");
 		const client = mkClient(values["allow-host"] as string | undefined, err);
 		const r = await mandateShow(client, positionals[1]!);
@@ -848,6 +915,34 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			data: r,
 			next_step: null,
 			text: [JSON.stringify({ mandate: r.mandate, agent: r.agent }, (_k, v) => (typeof v === "string" ? textSafe(v) : v), "\t")],
+		};
+	}
+	if (cmd === "signer") {
+		const { positionals } = parse(rest, {}, true);
+		const sub = positionals[0];
+		if (positionals.length !== 1 || (sub !== "init" && sub !== "status" && sub !== "link")) throw new UsageError("signer needs exactly: init, status or link");
+		if (sub === "init") {
+			const s = signerInit(kc);
+			return {
+				command: cmd,
+				exit_code: EXIT.ok,
+				data: { stored: true, where: `OS keychain (${KEYCHAIN_SERVICE})`, signer: s },
+				next_step: "commertize-agent signer status --json",
+				text: [`Signer key stored in the OS keychain. Fingerprint ${s.fingerprint}`, `Public key ${s.publicKey}`],
+			};
+		}
+		const st = signerStatus(kc);
+		if (sub === "link") {
+			if (!st.stored) throw new KitConfigError("no signer key stored: run signer init first");
+			// Binding the key to an agent needs the pairing routes; they are Not open, so this stops before any network call.
+			throw new RouteMissingError(ROUTES.pairingStart);
+		}
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: { ...st, link: "Not open" },
+			next_step: st.stored ? null : "commertize-agent signer init --json",
+			text: [st.signer ? `Signer key stored. Fingerprint ${st.signer.fingerprint}` : "No signer key stored.", "Link to an agent: Not open"],
 		};
 	}
 	if (cmd === "identity") {
