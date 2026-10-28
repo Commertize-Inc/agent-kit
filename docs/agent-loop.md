@@ -22,6 +22,7 @@ Branch on the exit code, never on wording. One table for every command:
 | 6 | sign-in denied |
 | 7 | sign-in expired |
 | 8 | wait timed out |
+| 9 | busy: another `events drain` holds this consumer's lock |
 | 10 | `job watch`: the task was rejected |
 | 11 | `job watch`: the task expired |
 | 12 | `job watch`: the task was cancelled |
@@ -65,7 +66,7 @@ object per line:
 
 ## Filters
 
-`events listen` and `events serve` take:
+`events listen`, `events drain` and `events serve` take:
 
 - `--type <event type>` (repeatable, exact: `work.task.changed`, ...)
 - `--since <ISO 8601 time>` (events at or after it)
@@ -73,4 +74,25 @@ object per line:
 
 `stream.error` and `stream.stopped` always pass a filter, so a filtered
 reader still sees failures and the end of the stream.
+
+## events drain
+
+```
+commertize-agent events listen --json >> events.ndjson     # one process writes
+commertize-agent events drain --file events.ndjson --limit 50 --key b-0001 --json
+```
+
+A drain returns the next batch of complete lines and acknowledges it in the
+same step: the next drain starts after it. Two drains of the same consumer
+take turns; a second one while the first runs exits 9.
+
+Retry with the same `--key` and you get the same batch again, unchanged, and
+nothing moves. Use a new key once you have handled a batch. Without a key a
+drain is at most once.
+
+Each `--consumer <name>` (default `default`) has its own cursor, stored next
+to the file as `<file>.<consumer>.cursor`. Events your filters exclude are
+acknowledged for that consumer, so use one consumer name per filter set. If
+the file is truncated or replaced, the drain refuses (exit 1,
+`drain_source_changed`) instead of guessing; start a new consumer name.
 

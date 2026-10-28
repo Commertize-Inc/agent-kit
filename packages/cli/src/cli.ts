@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EVENT_TYPES, history, listen, matchesFilter, POLL_FLOOR_MS, watchStop, type EventFilter, type KitEvent } from "./events.ts";
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
+import { drain, DrainBusyError, DrainSourceChangedError, DrainUsageError, DRAIN_LIMIT_MAX } from "./drain.ts";
 import { EXIT, handBack, taskFinal, type HandBack, type Reason } from "./handback.ts";
 import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
@@ -57,6 +58,9 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent events listen [--interval s] [--once] [filters]
                                              Work board changes as they happen (polls, floor 15 s);
                                              with --json, one event object per line (NDJSON)
+  commertize-agent events drain --file <file.ndjson> [--limit n] [--consumer name] [--key k] [filters]
+                                             take the next batch from a file events listen wrote,
+                                             and acknowledge it in the same step (retry: same --key)
   commertize-agent events serve [--port 8787] [filters]
                                              the event stream at http://127.0.0.1:<port>/events
                                              (loopback only, read only, no credentials)
@@ -167,7 +171,7 @@ export function takeJsonFlag(argv: string[]): { json: boolean; rest: string[] } 
 }
 
 function errorResult(command: string, e: unknown): Result {
-	if (e instanceof UsageError)
+	if (e instanceof UsageError || e instanceof DrainUsageError)
 		return {
 			command,
 			exit_code: EXIT.usage,
@@ -203,6 +207,24 @@ function errorResult(command: string, e: unknown): Result {
 			error: { code: "api", message: e.message, status: e.status },
 			next_step: "commertize-agent routes --json",
 			hand_back: handBack("api_error"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof DrainBusyError)
+		return {
+			command,
+			exit_code: EXIT.busy,
+			error: { code: "busy", message: e.message },
+			next_step: "Retry the same events drain command (with the same --key) after a short wait",
+			hand_back: handBack("busy"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof DrainSourceChangedError)
+		return {
+			command,
+			exit_code: EXIT.error,
+			error: { code: "source_changed", message: e.message },
+			next_step: "Drain with a new --consumer name",
+			hand_back: handBack("drain_source_changed"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	const m = (e as Error)?.message ?? String(e);
@@ -475,6 +497,29 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			textErr: ["commertize-agent: serve (your own handler as a paid endpoint) is Not open in this release.", "For the loopback event stream run: commertize-agent events serve"],
 		};
 	}
+	if (cmd === "events" && rest[0] === "drain") {
+		const { values } = parse(rest.slice(1), { file: { type: "string" }, limit: { type: "string" }, consumer: { type: "string" }, key: { type: "string" }, ...FILTER_FLAGS });
+		if (!values.file) throw new UsageError("events drain needs --file <events.ndjson>");
+		let limit: number | undefined;
+		if (values.limit !== undefined) {
+			limit = Number(values.limit);
+			if (!Number.isInteger(limit) || limit < 1 || limit > DRAIN_LIMIT_MAX) throw new UsageError(`--limit is 1-${DRAIN_LIMIT_MAX}`);
+		}
+		const r = drain({
+			file: values.file as string,
+			limit,
+			consumer: values.consumer as string | undefined,
+			key: values.key as string | undefined,
+			filter: filterFrom(values),
+		});
+		return {
+			command: cmd,
+			exit_code: EXIT.ok,
+			data: r,
+			next_step: r.more ? "Handle these events, then drain again with a new --key" : null,
+			text: r.events.map(textEvent).concat(r.skipped ? [`(${r.skipped} line(s) were not kit events and were skipped)`] : []),
+		};
+	}
 	if (cmd === "events" || cmd === "job") {
 		const sub = rest[0];
 		const more = rest.slice(1);
@@ -494,7 +539,7 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		}
 		const isListen = cmd === "events" && sub === "listen";
 		const isWatch = cmd === "job" && sub === "watch";
-		if (!isListen && !isWatch && !isServe) throw new UsageError(`${cmd} needs ${cmd === "events" ? "listen or serve" : "watch or history"}`);
+		if (!isListen && !isWatch && !isServe) throw new UsageError(`${cmd} needs ${cmd === "events" ? "listen, drain or serve" : "watch or history"}`);
 		const { values, positionals } = parse(
 			more,
 			{
