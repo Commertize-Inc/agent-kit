@@ -35,6 +35,11 @@ export const EXIT = {
 	task_removed: 14,
 	skill_drift: 15,
 	not_found: 16,
+	// Reserved for fail-closed classes; no command returns them in this release. Never reuse a code.
+	mandate_refused: 17,
+	state_unreadable: 18,
+	frozen: 19,
+	upstream_unavailable: 20,
 	aborted: 130,
 } as const;
 
@@ -67,7 +72,8 @@ export const HAND_BACK = {
 	signin_expired: A,
 	signin_timeout: A,
 	credential_not_stored: P("/profile"),
-	mandate_not_open: P("/mandates"),
+	// The principal sets the mandate up: the create page, not the list.
+	mandate_not_open: P("/mandates/new"),
 	mandate_not_found: P("/mandates"),
 	agent_not_found: P("/agents"),
 	skill_drift: A,

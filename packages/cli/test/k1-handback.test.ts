@@ -34,7 +34,7 @@ async function json(argv: string[], deps: Parameters<typeof main>[3] = {}) {
 }
 
 test("hand-back table: every URL is https on an allowed host, from two fixed bases; principal steps are dashboard pages", () => {
-	const allowedPaths = new Set(["/", "/profile", "/agents", "/mandates"]);
+	const allowedPaths = new Set(["/", "/profile", "/agents", "/mandates", "/mandates/new"]);
 	for (const [reason, h] of Object.entries(HAND_BACK)) {
 		const u = new URL(h.url);
 		assert.equal(u.protocol, "https:", reason);
@@ -47,6 +47,29 @@ test("hand-back table: every URL is https on an allowed host, from two fixed bas
 	// steps that grant access belong to the principal, never the agent
 	for (const r of ["session_missing", "api_key_missing", "host_not_allowed", "mandate_not_open", "mandate_not_found", "signin_pending", "signin_denied", "credential_not_stored"] as Reason[])
 		assert.equal(HAND_BACK[r].by, "principal", r);
+});
+
+// Pinned copy of the dashboard routes the hand-backs land on (apps/dashboard/src/App.tsx on the
+// platform's main branch, 2026-10-28). A renamed route must be changed here on purpose.
+const PINNED_HOSTS = ["app.commertize.com", "github.com"];
+const PINNED_URLS: Record<string, string> = {
+	"https://app.commertize.com/": "sign in",
+	"https://app.commertize.com/profile": "API keys and credential store",
+	"https://app.commertize.com/agents": "agents and pairing requests",
+	"https://app.commertize.com/mandates": "the principal's mandates",
+	"https://app.commertize.com/mandates/new": "create a mandate",
+	"https://github.com/Commertize-Inc/agent-kit#readme": "kit docs",
+};
+
+test("hand-back table: every host and every URL is in the pinned copy; the host allowlist is exactly the pinned hosts", () => {
+	assert.deepEqual([...HAND_BACK_HOSTS].sort(), [...PINNED_HOSTS].sort());
+	for (const [reason, h] of Object.entries(HAND_BACK)) {
+		const u = new URL(h.url);
+		assert.ok(PINNED_HOSTS.includes(u.hostname), `${reason}: host ${u.hostname}`);
+		assert.ok(Object.hasOwn(PINNED_URLS, h.url), `${reason}: ${h.url} is not a pinned route`);
+	}
+	assert.equal(HAND_BACK.mandate_not_open.url, "https://app.commertize.com/mandates/new");
+	assert.equal(HAND_BACK.mandate_not_found.url, "https://app.commertize.com/mandates");
 });
 
 test("handBack: takes only a known reason; prototype keys and unknown codes throw", () => {
