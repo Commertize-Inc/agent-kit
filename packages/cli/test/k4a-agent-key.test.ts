@@ -236,3 +236,15 @@ test("wallet key import: when the keychain's create reports an existing item, th
 	assert.equal(r.code, 1);
 	assert.equal(r.o.hand_back.reason, "agent_key_exists");
 });
+
+test("the agent key is a key item: set() refuses it, configure lists it as stored without its value", async () => {
+	const calls: string[][] = [];
+	const os = osKeychain((args) => (calls.push(args), { status: 0, stdout: "" }), () => true);
+	assert.throws(() => os.set(AGENT_KEY, KEY_ONE), /created once and never replaced/);
+	assert.deepEqual(calls, []);
+	const m = memKeychain();
+	await run(["wallet", "key", "import", "--stdin"], { kc: m.kc, stdin: KEY_ONE });
+	const c = await run(["configure"], { kc: m.kc });
+	assert.equal(c.o.data.keys[AGENT_KEY], true);
+	assert.doesNotMatch(c.raw, /0{62}01/);
+});
