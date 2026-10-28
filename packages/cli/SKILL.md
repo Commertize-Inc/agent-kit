@@ -156,7 +156,10 @@ commertize-agent signer status --json
   it. It is an attestation key only, never a payment or mandate signer.
   `signer link` is Not open (exit 4).
 - `wallet key import --stdin` stores the agent's own key (piped in by the
-  person; never type it as an argument). `wallet sign-typed-data` signs
+  person; never type it as an argument). Any process running as the person
+  can read it silently from the keychain, with no prompt: tell them to keep
+  only a low-balance agent wallet there, never more than the mandate's
+  operating float. Removing a key needs `configure --clear <name> --confirm`. `wallet sign-typed-data` signs
   nothing in this release: it tells you what the payload is and refuses it.
   Never try to get a mandate or a permit signed another way.
 

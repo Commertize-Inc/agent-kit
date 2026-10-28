@@ -475,7 +475,9 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			"session-token-stdin": { type: "boolean" },
 			"api-key-stdin": { type: "boolean" },
 			clear: { type: "string" },
+			confirm: { type: "boolean" },
 		});
+		if (values.confirm !== undefined && values.clear === undefined) throw new UsageError("--confirm goes with --clear");
 		const modes = [values["session-token-stdin"], values["api-key-stdin"], values.clear !== undefined].filter(Boolean).length;
 		if (modes > 1) throw new UsageError("configure takes one of --session-token-stdin, --api-key-stdin, --clear NAME");
 		const envNext = "Use the environment instead: export COMMERTIZE_SESSION_TOKEN / COMMERTIZE_API_KEY in your own shell";
@@ -487,6 +489,9 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		let action: string | null = null;
 		if (values.clear !== undefined) {
 			const n = checkName(values.clear as string);
+			// A key item cannot be recreated from anywhere (it was generated here or imported once): removing it needs --confirm.
+			if (!(KEY_NAMES as readonly string[]).includes(n) && values.confirm !== true)
+				throw new UsageError(`${n} is a key: removing it cannot be undone here; pass --confirm to remove it`);
 			action = kc.clear(n) ? `cleared ${n}` : `${n} was not stored`;
 		} else if (values["session-token-stdin"] || values["api-key-stdin"]) {
 			const n: KeyName = values["api-key-stdin"] ? "COMMERTIZE_API_KEY" : "COMMERTIZE_SESSION_TOKEN";
@@ -1001,6 +1006,9 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		const active = activeAgent(values);
 		const read = deps.readStdin ?? readAllStdin;
 		const r = importAgentKey(kc, await read(), active?.agentAddress ?? null);
+		err(
+			"commertize-agent: warning: any process running as you can read this key from the OS keychain silently, with no prompt. Keep only a low-balance agent wallet here, never more than the mandate's operating float."
+		);
 		return {
 			command: cmd,
 			exit_code: EXIT.ok,

@@ -229,7 +229,14 @@ commertize-agent wallet sign-typed-data --file typed-data.json --json   # exit 4
   existing key is never replaced). If an active agent is set
   (`agents --use`), the key's address must be that agent's, or nothing is
   stored. The key is never printed; `wallet key status` shows its address.
-  Remove it with `commertize-agent configure --clear COMMERTIZE_AGENT_KEY`.
+  Remove it with
+  `commertize-agent configure --clear COMMERTIZE_AGENT_KEY --confirm`
+  (removing a key, this one or the signer key, needs `--confirm`).
+- **Read this before importing.** Any process running as you can read the
+  stored agent key from the OS keychain silently, with no prompt. Keep only
+  a low-balance agent wallet there: the key must never control more than
+  the mandate's operating float. `wallet key import` prints this warning on
+  stderr every time.
 - This release signs nothing with the agent key. `wallet sign-typed-data`
   reads the payload, says what it is, and refuses it (exit 4, `signed:
   false`), without reading the key:

@@ -217,7 +217,7 @@ test("configure --clear removes the agent key; it is not listed as a credential"
 	await run(["wallet", "key", "import", "--stdin"], { kc: m.kc, stdin: KEY_ONE });
 	const c = await run(["configure"], { kc: m.kc });
 	assert.deepEqual(Object.keys(c.o.data.stored), ["COMMERTIZE_SESSION_TOKEN", "COMMERTIZE_API_KEY"]);
-	assert.equal((await run(["configure", "--clear", AGENT_KEY], { kc: m.kc })).code, 0);
+	assert.equal((await run(["configure", "--clear", AGENT_KEY, "--confirm"], { kc: m.kc })).code, 0);
 	assert.equal(m.store.size, 0);
 });
 
@@ -247,4 +247,35 @@ test("the agent key is a key item: set() refuses it, configure lists it as store
 	const c = await run(["configure"], { kc: m.kc });
 	assert.equal(c.o.data.keys[AGENT_KEY], true);
 	assert.doesNotMatch(c.raw, /0{62}01/);
+});
+
+test("wallet key import prints a one-line stderr warning: same-user processes read the key silently; keep only the operating float there", async () => {
+	const m = memKeychain();
+	const err: string[] = [];
+	const out: string[] = [];
+	const code = await main(["wallet", "key", "import", "--stdin", "--json"], (l) => out.push(l), (l) => err.push(l), {
+		keychain: m.kc,
+		readStdin: async () => KEY_ONE,
+		home: homeWithActive(null),
+		signals: false,
+	});
+	assert.equal(code, 0);
+	assert.equal(err.length, 1);
+	assert.match(err[0]!, /any process running as you can read this key .* silently, with no prompt/);
+	assert.match(err[0]!, /never more than the mandate's operating float/);
+	assert.equal(out.length, 1, "stdout stays one JSON object");
+});
+
+test("configure --clear of a key item needs --confirm (agent key and signer key); credentials do not; --confirm alone is usage", async () => {
+	const m = memKeychain();
+	await run(["wallet", "key", "import", "--stdin"], { kc: m.kc, stdin: KEY_ONE });
+	const no = await run(["configure", "--clear", AGENT_KEY], { kc: m.kc });
+	assert.equal(no.code, 2);
+	assert.match(no.o.error.message, /pass --confirm/);
+	assert.equal(m.store.get(AGENT_KEY), KEY_ONE, "nothing removed");
+	assert.equal((await run(["configure", "--clear", "COMMERTIZE_SIGNER_KEY"], { kc: m.kc })).code, 2);
+	assert.equal((await run(["configure", "--clear", "COMMERTIZE_API_KEY"], { kc: m.kc })).code, 0);
+	assert.equal((await run(["configure", "--confirm"], { kc: m.kc })).code, 2);
+	assert.equal((await run(["configure", "--clear", AGENT_KEY, "--confirm"], { kc: m.kc })).code, 0);
+	assert.equal(m.store.has(AGENT_KEY), false);
 });
