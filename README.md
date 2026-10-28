@@ -73,6 +73,10 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 | `GET /agents/activity` | desk-watcher | live; empty unless mandates are switched on |
 | `GET /desk/brief` | desk-watcher | live |
 
+## From an agent loop
+
+Exit codes, the `hand_back` on every refusal, `availableTools` on every event line, and event filters: see [docs/agent-loop.md](docs/agent-loop.md). The loopback event stream is `commertize-agent events serve`; the name `serve` is reserved for [your own handler as a paid endpoint](docs/serve-paid-endpoint.md), which is Not open.
+
 ## Through MCP
 
 A template's reads can also go through the Commertize MCP server ([Commertize-Inc/mcp-server](https://github.com/Commertize-Inc/mcp-server)) from any MCP client. The kit does not bundle or start that server: clone and build it, then print the client config for your template:

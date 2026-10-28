@@ -10,8 +10,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { history, listen, POLL_FLOOR_MS, watchStop, type KitEvent } from "./events.ts";
+import { EVENT_TYPES, history, listen, matchesFilter, POLL_FLOOR_MS, watchStop, type EventFilter, type KitEvent } from "./events.ts";
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
+import { EXIT, handBack, taskFinal, type HandBack, type Reason } from "./handback.ts";
 import { checkName, KEY_NAMES, KEYCHAIN_SERVICE, type KeyName, type Keychain } from "./keychain.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
@@ -23,7 +24,24 @@ export const KIT_VERSION = "0.2.0";
 /** Every `--json` result carries this schema id. */
 export const JSON_SCHEMA = "commertize.agent-kit.cli.v1";
 
-export const COMMANDS = ["help", "version", "init", "auth", "register", "events", "job", "serve", "routes", "mcp", "skill", "configure"] as const;
+/**
+ * `serve` is reserved for serving your own handler as a paid endpoint (docs/serve-paid-endpoint.md).
+ * It is Not open in this release and answers exit 4; the event stream is `events serve`.
+ */
+export const COMMANDS = [
+	"help",
+	"version",
+	"init",
+	"auth",
+	"register",
+	"events",
+	"job",
+	"serve",
+	"routes",
+	"mcp",
+	"skill",
+	"configure",
+] as const;
 
 const USAGE = `commertize-agent ${KIT_VERSION}
 
@@ -36,14 +54,20 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              check (or wait for) that sign-in; exit 0 approved,
                                              5 pending, 6 denied, 7 expired, 8 timed out
   commertize-agent register ... --no-wait    with no session: start sign-in instead (exit 5)
-  commertize-agent events listen [--interval s] [--once]
+  commertize-agent events listen [--interval s] [--once] [filters]
                                              Work board changes as they happen (polls, floor 15 s);
                                              with --json, one event object per line (NDJSON)
+  commertize-agent events serve [--port 8787] [filters]
+                                             the event stream at http://127.0.0.1:<port>/events
+                                             (loopback only, read only, no credentials)
+      filters: --type <event type> (repeatable), --since <ISO time>, --job <taskId>
   commertize-agent job watch <taskId>        one task's changes, until it reaches a final state
+                                             (exit 0 completed, 10 rejected, 11 expired,
+                                             12 cancelled, 13 closed, 14 left the board)
   commertize-agent job history <taskId> --from <file.ndjson>
                                              that task's events from a file events listen wrote
-  commertize-agent serve [--port 8787]       the event stream at http://127.0.0.1:<port>/events
-                                             (loopback only, read only, no credentials)
+  commertize-agent serve                     reserved: serving your own handler as a paid
+                                             endpoint is Not open (exit 4); see events serve
   commertize-agent routes                    every route the kit calls, live or not open
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
@@ -51,11 +75,12 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent configure [--session-token-stdin | --api-key-stdin | --clear NAME]
                                              keep your credentials in the OS keychain (macOS);
                                              values are read from stdin only, never printed
-  commertize-agent skill print             the operating guide for a coding agent (SKILL.md)
+  commertize-agent skill print               the operating guide for a coding agent (SKILL.md)
   commertize-agent version | help
 
   --json  on any command: print exactly one JSON object per result on stdout
-          ({ schema, command, ok, exit_code, data, error, next_step })
+          ({ schema, command, ok, exit_code, data, error, next_step, hand_back })
+          hand_back { reason, by, url } is set on every refusal and every final state
 
 Environment (read, never stored): COMMERTIZE_API_BASE_URL, COMMERTIZE_SESSION_TOKEN, COMMERTIZE_API_KEY
 `;
@@ -69,9 +94,15 @@ export interface Result {
 	command: string;
 	exit_code: number;
 	data?: unknown;
-	error?: { code: "usage" | "config" | "route_missing" | "api" | "internal" | "timeout" | "denied" | "expired"; message: string; status?: number };
+	error?: {
+		code: "usage" | "config" | "route_missing" | "not_open" | "api" | "internal" | "timeout" | "denied" | "expired" | "busy" | "source_changed" | "not_found" | "drift";
+		message: string;
+		status?: number;
+	};
 	/** One instruction for the caller (a command line or a sentence), or null when there is nothing left to do. */
 	next_step: string | null;
+	/** Set on every refusal and every final state (see handback.ts). render() fills one in for any non-zero exit that lacks it. */
+	hand_back?: HandBack | null;
 	/** Text-mode rendering (stdout lines, stderr lines). JSON mode ignores both. */
 	text?: string[];
 	textErr?: string[];
@@ -88,6 +119,36 @@ function parse(args: string[], options: ParseArgsOptionsConfig, allowPositionals
 	} catch (e) {
 		throw new UsageError((e as Error).message);
 	}
+}
+
+const FILTER_FLAGS = {
+	type: { type: "string", multiple: true },
+	since: { type: "string" },
+	job: { type: "string" },
+} as const satisfies ParseArgsOptionsConfig;
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2}))?$/;
+const TASK_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+/** --type / --since / --job, validated. An unknown event type or an unreadable time is a usage error, never ignored. */
+function filterFrom(values: Values): EventFilter | undefined {
+	const f: EventFilter = {};
+	const types = values.type as string[] | undefined;
+	if (types?.length) {
+		for (const t of types) if (!(EVENT_TYPES as readonly string[]).includes(t)) throw new UsageError(`--type must be one of: ${EVENT_TYPES.join(", ")}`);
+		f.types = new Set(types);
+	}
+	if (values.since !== undefined) {
+		const s = values.since as string;
+		const ms = Date.parse(s);
+		if (!ISO_TIME.test(s) || !Number.isFinite(ms)) throw new UsageError("--since is an ISO 8601 time, e.g. 2026-10-28T17:00:00Z");
+		f.sinceMs = ms;
+	}
+	if (values.job !== undefined) {
+		if (!TASK_ID.test(values.job as string)) throw new UsageError("--job is a task id (1-128 characters of A-Z a-z 0-9 _ . : -)");
+		f.job = values.job as string;
+	}
+	return Object.keys(f).length ? f : undefined;
 }
 
 /** Removes every `--json` (anywhere before a bare `--`) and reports whether one was present. */
@@ -107,36 +168,45 @@ export function takeJsonFlag(argv: string[]): { json: boolean; rest: string[] } 
 
 function errorResult(command: string, e: unknown): Result {
 	if (e instanceof UsageError)
-		return { command, exit_code: 2, error: { code: "usage", message: e.message }, next_step: HELP_NEXT, textErr: [e.message, USAGE] };
+		return {
+			command,
+			exit_code: EXIT.usage,
+			error: { code: "usage", message: e.message },
+			next_step: HELP_NEXT,
+			hand_back: handBack("usage"),
+			textErr: [e.message, USAGE],
+		};
 	if (e instanceof RouteMissingError)
 		return {
 			command,
-			exit_code: 4,
+			exit_code: EXIT.not_open,
 			error: { code: "route_missing", message: e.message },
 			next_step: "commertize-agent routes --json",
+			hand_back: handBack("route_not_open"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	if (e instanceof KitConfigError) {
 		const m = e.message;
-		const next = /SESSION_TOKEN/.test(m)
-			? "Sign in at commertize.com and export COMMERTIZE_SESSION_TOKEN, or run: commertize-agent auth start --json"
+		const [next, reason]: [string, Reason] = /SESSION_TOKEN/.test(m)
+			? ["Ask the person you act for to sign in (hand_back.url), or run: commertize-agent auth start --json", "session_missing"]
 			: /API_KEY/.test(m)
-				? "Export COMMERTIZE_API_KEY with your own issued key"
+				? ["Ask the person you act for to issue an API key (hand_back.url) and export COMMERTIZE_API_KEY in their own shell", "api_key_missing"]
 				: /--allow-host|BASE_URL/.test(m)
-					? "Unset COMMERTIZE_API_BASE_URL, or pass --allow-host with the exact host you trust"
-					: HELP_NEXT;
-		return { command, exit_code: 1, error: { code: "config", message: m }, next_step: next, textErr: [`commertize-agent: ${m}`] };
+					? ["Ask the person you act for which API host to trust; do not pass --allow-host on your own", "host_not_allowed"]
+					: [HELP_NEXT, "config"];
+		return { command, exit_code: EXIT.error, error: { code: "config", message: m }, next_step: next, hand_back: handBack(reason), textErr: [`commertize-agent: ${m}`] };
 	}
 	if (e instanceof ApiError)
 		return {
 			command,
-			exit_code: 1,
+			exit_code: EXIT.error,
 			error: { code: "api", message: e.message, status: e.status },
 			next_step: "commertize-agent routes --json",
+			hand_back: handBack("api_error"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
 	const m = (e as Error)?.message ?? String(e);
-	return { command, exit_code: 1, error: { code: "internal", message: m }, next_step: null, textErr: [`commertize-agent: ${m}`] };
+	return { command, exit_code: EXIT.error, error: { code: "internal", message: m }, next_step: null, hand_back: handBack("internal"), textErr: [`commertize-agent: ${m}`] };
 }
 
 export interface Deps {
@@ -245,6 +315,7 @@ function startResult(command: string, s: AuthStartResult, exit: number): Result 
 		exit_code: exit,
 		data: s,
 		next_step: `commertize-agent auth complete --request ${s.requestId} --wait --json`,
+		hand_back: exit === EXIT.ok ? null : handBack("signin_pending"),
 		text: [`Open this link to sign in (expires in ${s.expiresIn} s):`, s.signinUrl, `Then run: commertize-agent auth complete --request ${s.requestId} --wait`],
 	};
 }
@@ -370,19 +441,44 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 					: r.status === "pending" || r.status === "timeout"
 						? `commertize-agent auth complete --request ${id} --wait --json`
 						: "commertize-agent auth start --json";
+			const hb: Reason | null =
+				r.status === "approved"
+					? r.credential === "not_stored"
+						? "credential_not_stored"
+						: null
+					: r.status === "pending"
+						? "signin_pending"
+						: r.status === "denied"
+							? "signin_denied"
+							: r.status === "expired"
+								? "signin_expired"
+								: "signin_timeout";
 			return {
 				command: "auth",
 				exit_code: AUTH_EXIT[r.status],
 				data: r,
 				next_step: next,
+				hand_back: hb ? handBack(hb) : null,
 				text: [`Sign-in ${r.status}${r.credential === "stored" ? ` (credential kept in ${r.where})` : r.credential === "not_stored" ? " (credential NOT kept: no store configured)" : ""}`],
 			};
 		}
 		throw new UsageError("auth needs start or complete");
 	}
-	if (cmd === "events" || cmd === "job" || cmd === "serve") {
-		const sub = cmd === "serve" ? "serve" : rest[0];
-		const more = cmd === "serve" ? rest : rest.slice(1);
+	if (cmd === "serve") {
+		// Reserved name. No flag is parsed: whatever follows, nothing is bound and nothing is sent.
+		return {
+			command: cmd,
+			exit_code: EXIT.not_open,
+			error: { code: "not_open", message: "serve (your own handler as a paid endpoint) is Not open in this release; the event stream is `events serve`" },
+			next_step: "commertize-agent events serve --json",
+			hand_back: handBack("serve_not_open"),
+			textErr: ["commertize-agent: serve (your own handler as a paid endpoint) is Not open in this release.", "For the loopback event stream run: commertize-agent events serve"],
+		};
+	}
+	if (cmd === "events" || cmd === "job") {
+		const sub = rest[0];
+		const more = rest.slice(1);
+		const isServe = cmd === "events" && sub === "serve";
 		if (cmd === "job" && sub === "history") {
 			const { values, positionals } = parse(more, { from: { type: "string" } }, true);
 			const [taskId] = positionals;
@@ -398,18 +494,20 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		}
 		const isListen = cmd === "events" && sub === "listen";
 		const isWatch = cmd === "job" && sub === "watch";
-		if (!isListen && !isWatch && cmd !== "serve") throw new UsageError(`${cmd} needs ${cmd === "events" ? "listen" : "watch or history"}`);
+		if (!isListen && !isWatch && !isServe) throw new UsageError(`${cmd} needs ${cmd === "events" ? "listen or serve" : "watch or history"}`);
 		const { values, positionals } = parse(
 			more,
 			{
 				interval: { type: "string" },
 				once: { type: "boolean" },
 				"allow-host": { type: "string" },
-				...(cmd === "serve" ? { port: { type: "string" } } : {}),
+				...(isServe ? { port: { type: "string" } } : {}),
+				...(isWatch ? {} : FILTER_FLAGS),
 			},
 			isWatch
 		);
-		const taskId = isWatch ? positionals[0] : undefined;
+		const filter = isWatch ? undefined : filterFrom(values);
+		const taskId = isWatch ? positionals[0] : filter?.job;
 		if (isWatch && !taskId) throw new UsageError("job watch needs <taskId>");
 		let intervalMs: number | undefined;
 		if (values.interval !== undefined) {
@@ -418,7 +516,7 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			intervalMs = s * 1000;
 		}
 		let port = 0;
-		if (cmd === "serve") {
+		if (isServe) {
 			port = Number(values.port ?? "8787");
 			if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new UsageError("--port is 1024-65535");
 		}
@@ -432,13 +530,14 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		const hub = new EventHub();
 		let server: { close: () => Promise<void> } | undefined;
 		try {
-			if (cmd === "serve") {
+			if (isServe) {
 				const listenFn = deps.listenServer ?? defaultListen;
 				server = await listenFn(makeHandler(hub, port, () => ({ port })), port, SERVE_HOST);
 				err(`commertize-agent: serving events on http://${SERVE_HOST}:${port}/events (loopback only)`);
 			}
 			const emit = (e: KitEvent) => {
-				if (cmd === "serve") hub.publish(e);
+				if (!matchesFilter(e, filter)) return;
+				if (isServe) hub.publish(e);
 				else if (deps.json) out(JSON.stringify(e));
 				else out(textEvent(e));
 			};
@@ -447,20 +546,42 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 				emit,
 				intervalMs,
 				taskId,
-				stopWhen: taskId ? watchStop(taskId) : undefined,
+				stopWhen: isWatch && taskId ? watchStop(taskId) : undefined,
 				maxPolls: values.once ? 1 : deps.maxPolls,
 				sleep: deps.sleep ? deps.sleep : (ms) => abortableSleep(ms, ac.signal),
 				signal: ac.signal,
 			});
-			const command = cmd === "serve" ? "serve" : cmd;
+			const command = cmd;
 			if (o.reason === "route_missing")
-				return { command, exit_code: 4, data: o, error: { code: "route_missing", message: o.message ?? "" }, next_step: "commertize-agent routes --json" };
-			return {
-				command,
-				exit_code: 0,
-				data: o,
-				next_step: isWatch && o.reason === "stopped" ? `commertize-agent job history ${taskId} --from <file you recorded>` : null,
-			};
+				return {
+					command,
+					exit_code: EXIT.not_open,
+					data: o,
+					error: { code: "route_missing", message: o.message ?? "" },
+					next_step: "commertize-agent routes --json",
+					hand_back: handBack("route_not_open"),
+				};
+			if (o.reason === "aborted") return { command, exit_code: EXIT.aborted, data: o, next_step: null, hand_back: handBack("aborted") };
+			if (isWatch) {
+				// A watch ends on a final state (its own exit code), on removal (14), or early (--once: 5, still open).
+				const fin = o.final;
+				const f = fin ? taskFinal(fin.status) : undefined;
+				const [exit, reason]: [number, Reason] = !fin
+					? [EXIT.pending, "stream_stopped"]
+					: fin.status === "removed"
+						? [EXIT.task_removed, "task_removed"]
+						: f
+							? [f.exit, f.reason]
+							: [EXIT.pending, "stream_stopped"];
+				return {
+					command,
+					exit_code: exit,
+					data: o,
+					next_step: fin ? `commertize-agent job history ${taskId} --from <file you recorded>` : `commertize-agent job watch ${taskId} --json`,
+					hand_back: handBack(reason),
+				};
+			}
+			return { command, exit_code: EXIT.ok, data: o, next_step: null, hand_back: handBack("stream_stopped") };
 		} finally {
 			process.removeListener("SIGINT", onSig);
 			process.removeListener("SIGTERM", onSig);
@@ -485,9 +606,10 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		const r = await register(client, addr, (values["task-class"] as string[] | undefined) ?? []);
 		return {
 			command: cmd,
-			exit_code: 3, // registered; the mandate route is Not open
+			exit_code: EXIT.registered_mandate_not_open,
 			data: r,
 			next_step: "The task mandate route is Not open; check `commertize-agent routes --json` for taskMandateCreate",
+			hand_back: handBack("mandate_not_open"),
 			text: [
 				[
 					`Wallet: ${r.passport.agentAddress} (${r.passport.reused ? "already registered" : "registered"}, ${r.passport.passportId})`,
@@ -540,6 +662,8 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 }
 
 export function render(r: Result, json: boolean, out: Out, err: Out): number {
+	// Fail closed: a refusal that reached here without a hand-back still gets one.
+	const hb = r.hand_back ?? (r.exit_code !== EXIT.ok ? handBack("internal") : null);
 	if (json) {
 		out(
 			JSON.stringify({
@@ -550,11 +674,14 @@ export function render(r: Result, json: boolean, out: Out, err: Out): number {
 				data: r.data ?? null,
 				error: r.error ?? null,
 				next_step: r.next_step,
+				hand_back: hb,
 			})
 		);
 	} else {
 		for (const l of r.text ?? []) out(l);
 		for (const l of r.textErr ?? []) err(l);
+		if (hb && r.exit_code !== EXIT.ok)
+			err(`commertize-agent: ${hb.reason}: ${hb.by === "principal" ? "the person you act for continues at" : "see"} ${hb.url}`);
 	}
 	return r.exit_code;
 }

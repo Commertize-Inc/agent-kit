@@ -11,17 +11,24 @@ It ships inside the npm package and prints with `commertize-agent skill print`.
 ## Rules that always apply
 
 1. Add `--json` to every command. Each result is exactly one JSON object on
-   stdout: `{ schema, command, ok, exit_code, data, error, next_step }`.
+   stdout: `{ schema, command, ok, exit_code, data, error, next_step, hand_back }`.
    Stream commands print one event object per line first, then that result.
 2. Read `next_step` and do it, or show it to the person. It is either a
    command line or one sentence. `null` means nothing is left to do.
+   On every refusal and every final state, `hand_back` is
+   `{ reason, by, url }`. When `by` is `principal`, show the person `url`
+   and wait for them; do not try to get around it yourself.
 3. Branch on the exit code, not on wording:
    - 0 ok
    - 1 configuration or API error (see `error.code` and `error.message`)
    - 2 usage error (unknown command or flag; nothing was sent)
    - 3 registered; the task mandate route is Not open
-   - 4 the route is Not open on the public API; nothing was sent
-   - 5 sign-in pending, 6 sign-in denied, 7 sign-in expired, 8 wait timed out
+   - 4 Not open on the public API (a route, or the `serve` command); nothing was sent
+   - 5 pending (sign-in, or a watched task still open), 6 sign-in denied,
+     7 sign-in expired, 8 wait timed out
+   - `job watch`: 0 completed, 10 rejected, 11 expired, 12 cancelled,
+     13 closed, 14 left the board
+   - 130 stopped by a signal
 4. Never print, paste, echo or log a session token or an API key. Never put
    one on a command line. The CLI reads `COMMERTIZE_SESSION_TOKEN` and
    `COMMERTIZE_API_KEY` from the environment, or from the OS keychain after
@@ -95,7 +102,11 @@ commertize-agent job history <taskId> --from events.ndjson --json
 - `job watch` follows one task and stops when it reaches a final state
   (completed, rejected, expired, closed, cancelled) or leaves the board.
 - `job history` reads that file back, filtered to one task.
-- `commertize-agent serve --port 8787` offers the same stream at
+- Every event line has `availableTools`: the kit commands valid in the state
+  it reports. Pick your next command from that list.
+- Filters for listen and serve: `--type <event type>`,
+  `--since <ISO time>`, `--job <taskId>`.
+- `commertize-agent events serve --port 8787` offers the same stream at
   `/events` on 127.0.0.1 at that port, for a process that would rather connect.
   It listens on loopback only and refuses browser requests.
 
