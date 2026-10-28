@@ -76,6 +76,7 @@ export const HAND_BACK = {
 	mandate_not_open: P("/mandates/new"),
 	mandate_not_found: P("/mandates"),
 	agent_not_found: P("/agents"),
+	no_active_agent: A,
 	skill_drift: A,
 	// terminal states
 	task_completed: A,

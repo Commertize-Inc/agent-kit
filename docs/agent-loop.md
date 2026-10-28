@@ -137,3 +137,31 @@ commertize-agent skill check --path ./SKILL.md --json
 Compares each installed copy of the operating guide with the guide shipped
 in this release (SHA-256 of the exact bytes). Exit 15 if any copy differs or
 is missing; replace it with the output of `commertize-agent skill print`.
+
+## Active agent, identity and wallet
+
+```
+commertize-agent agents --use <passportId or 0x address> [--profile name] [--dry-run] --json
+commertize-agent identity show [--agent 0x...|passportId] --json
+commertize-agent wallet address --json
+commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH] --json
+```
+
+- `agents --use` checks that the agent is one of yours and that its KYA
+  status is `active`, then records it as the agent later commands act as, in
+  `~/.commertize/profiles/<profile>.json` (directories 0700, file 0600). The
+  file holds the passport id and address only: no credential, no key.
+  `--dry-run` shows what it would record and writes nothing. A profile file
+  this kit did not write, or a symlinked directory or file on that path,
+  stops the command instead of being followed.
+- `whoami`, `identity show` and `wallet` use the active agent when you pass
+  no `--agent`. With neither, they exit 16 (`hand_back.reason:
+  "no_active_agent"`) before any network call.
+- `identity show` reads the agent's passport and its KYA check record. If the
+  check record is switched off on the deployment (it answers 404), `checks`
+  is `null` with a note: it is never reported as an empty list.
+- `wallet balance` reads Base over the public RPC endpoints
+  (mainnet.base.org, sepolia.base.org). It checks the chain id before any
+  balance read, uses the pinned USDC contract for the network, and reports
+  `raw` (integer base units), `decimals` and `formatted` (built with integer
+  arithmetic). It holds no key and signs nothing.

@@ -58,7 +58,8 @@ Status as of 2026-10-26. "Live" means the route is available on the public Comme
 | Route | Used by | State |
 |---|---|---|
 | `POST /mandates/principal/passports` | `register` | live; may be switched off (404) |
-| `GET /mandates/principal/agents` | `register` (re-run), `whoami`, `agents`, `mandate show` | live; may be switched off (404) |
+| `GET /mandates/principal/agents` | `register` (re-run), `whoami`, `agents`, `mandate show`, `identity show` | live; may be switched off (404) |
+| `GET /kya/passports/:pid/checks` | `identity show` | live; may be switched off (404) |
 | `POST /agents/v1/pairings` | `register` (headless pairing) | Not open |
 | `POST /agents/v1/task-mandates` | `register` | Not open |
 | `GET /agents/v1/me` | `register` | Not open |
