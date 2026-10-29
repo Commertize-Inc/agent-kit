@@ -61,7 +61,7 @@ test("whoami: exactly one read; identity, mandates, company check; payees and sp
 	assert.equal(r.calls[0]!.pathname, "/mandates/principal/agents");
 	assert.equal(r.calls[0]!.searchParams.get("limit"), "50");
 	const d = r.o.data;
-	assert.deepEqual(d.agent, { passportId: P1, agentAddress: A1, kyaStatus: "active" });
+	assert.deepEqual(d.agent, { passportId: P1, agentAddress: A1, kya_state: "active" });
 	assert.deepEqual(d.mandates, [m]);
 	assert.deepEqual(d.principal.kyb, { status: "verified", as_of: "2026-10-01T00:00:00.000Z", label: "KYB verified" });
 	assert.deepEqual(d.payees, { status: "Not open", value: null });

@@ -61,7 +61,7 @@ export async function identityShow(client: CommertizeClient, ref: string) {
 		});
 	} catch (e) {
 		if (!(e instanceof ApiError) || e.status !== 404) throw e;
-		checks_note = notOpen("the KYA check record");
+		checks_note = notOpen("identity show");
 	}
 	return {
 		passport: {

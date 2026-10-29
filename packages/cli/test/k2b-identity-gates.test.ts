@@ -76,7 +76,7 @@ test("identity show: a 404 from /kya is the Not open refusal, exit 4 route_not_o
 	for (const json of [true, false]) {
 		const r = await run(["identity", "show", "--agent", P1], { [AGENTS]: { body: page([agent(P1, A1)]) } }, json);
 		assert.equal(r.code, 4);
-		assert.ok(r.raw.includes(notOpen("the KYA check record")), "apx-b58b04e86a, exact");
+		assert.ok(r.raw.includes(notOpen("identity show")), "apx-b58b04e86a, exact");
 		assert.doesNotMatch(r.raw, /KYA checks: 0|"checks":\s*\[\]/);
 		if (json) {
 			assert.equal(r.o.hand_back.reason, "route_not_open");
@@ -171,4 +171,23 @@ test("help text: the K-2 lines carry no banned word", () => {
 	const lines = USAGE_TEXT.split("\n").filter((l) => /identity|agent update|--name|--description/.test(l));
 	assert.ok(lines.length >= 3);
 	for (const l of lines) assert.doesNotMatch(l, /verified|verification|approved|\btoken\b|invest|\byet\b|\bnone\b|\bzero\b|\bsoon\b/i, l);
+});
+
+test("one key across commands: whoami, agents, mandate show and identity show emit kya_state (raw), never kyaStatus", async () => {
+	const M1 = "11111111-1111-4111-8111-111111111111";
+	const one = { ...agent(P1, A1, "pending_review"), mandates: [{ mandateId: M1, status: "active" }] };
+	const t = { [AGENTS]: { body: page([one]) }, [CHECKS]: { body: { checks: [] } } };
+	const pick: [string[], (o: { data: Record<string, any> }) => unknown][] = [
+		[["whoami"], (o) => o.data.agent],
+		[["agents"], (o) => o.data.agents[0]],
+		[["mandate", "show", M1], (o) => o.data.agent],
+		[["identity", "show", "--agent", P1], (o) => o.data.passport],
+	];
+	for (const [argv, get] of pick) {
+		const r = await run(argv, t);
+		assert.equal(r.code, 0, argv.join(" "));
+		const obj = get(r.o) as Record<string, unknown>;
+		assert.equal(obj.kya_state, "pending_review", argv.join(" "));
+		assert.doesNotMatch(r.raw, /kyaStatus/, argv.join(" "));
+	}
 });

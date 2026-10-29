@@ -174,6 +174,12 @@ commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH]
   `--description` or `--homepage` are Not open on this network: each checks
   its flags locally (exit 2 on a bad value), then exits 4 with reason
   `route_not_open` and sends nothing.
+- **Upgrading (breaking JSON change).** The passport state key is now
+  `kya_state` (the raw served code) in every JSON output: `whoami`
+  (`data.agent`), `agents` (`data.agents[]`), `mandate show` (`data.agent`)
+  and `identity show` (`data.passport`). The old `kyaStatus` key is gone
+  from all four. `identity show` also exits 4 (not 0) when the check
+  record answers 404.
 - `wallet balance` reads Base over the public RPC endpoints
   (mainnet.base.org, sepolia.base.org). It checks the chain id before any
   balance read, uses the pinned USDC contract for the network, and reports

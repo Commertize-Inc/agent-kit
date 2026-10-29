@@ -881,7 +881,7 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			next_step: a ? null : w.agents_count ? "Several agents: pass --agent 0x... to pick yours, or run: commertize-agent agents --json" : null,
 			text: [
 				`Company check: ${w.principal.kyb.label ?? "no label"}${w.principal.kyb.as_of ? ` (as of ${textSafe(w.principal.kyb.as_of)})` : ""}`,
-				a ? `Agent: ${textSafe(a.agentAddress)} (${textSafe(a.passportId)}), KYA ${textSafe(a.kyaStatus)}` : `Agents under this account: ${w.agents_count}${w.agents_truncated ? "+" : ""}`,
+				a ? `Agent: ${textSafe(a.agentAddress)} (${textSafe(a.passportId)}), kya_state ${textSafe(a.kya_state)}` : `Agents under this account: ${w.agents_count}${w.agents_truncated ? "+" : ""}`,
 				`Mandates: ${w.mandates.length}`,
 				"Payees: Not open",
 				"Spend to date: Not open",
@@ -939,10 +939,10 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		return {
 			command: cmd,
 			exit_code: EXIT.ok,
-			data: r,
+			data: { ...r, agents: r.agents.map(({ kyaStatus, ...x }) => ({ ...x, kya_state: kyaStatus })) },
 			next_step: r.next_cursor ? `commertize-agent agents --cursor ${r.next_cursor} --json` : null,
 			text: (r.agents.length
-				? r.agents.map((x) => `${textSafe(x.agentAddress)}  ${textSafe(x.passportId)}  KYA ${textSafe(x.kyaStatus)}  mandates ${x.mandates.length}`)
+				? r.agents.map((x) => `${textSafe(x.agentAddress)}  ${textSafe(x.passportId)}  kya_state ${textSafe(x.kyaStatus)}  mandates ${x.mandates.length}`)
 				: ["No agents under this account."]
 			).concat(r.dropped_rows ? [`(${r.dropped_rows} row(s) from the server were malformed and left out)`] : []),
 		};
