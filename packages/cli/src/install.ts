@@ -71,13 +71,17 @@ export async function install(o: InstallOptions): Promise<InstallResult> {
 		{ id: "mandate", state: "not_available", message: NOT_AVAILABLE.mandate },
 	];
 	// 1. kill file, before anything else is read or sent
-	if (existsSync(killFilePath(o.home)))
+	const kill = killFileState(o.home);
+	if (kill !== "absent")
 		return {
 			exit: INSTALL_EXIT.disabled,
 			steps: rest({
 				id: "passport",
 				state: "stopped",
-				message: `Stopped: ${killFilePath(o.home)} is present, so this kit makes no writes. Only your principal removes it.`,
+				message:
+					kill === "present"
+						? `Stopped: ${killFilePath(o.home)} is present, so this kit makes no writes. Only your principal removes it.`
+						: `Stopped: ${killFilePath(o.home)} could not be checked, so this kit makes no writes.`,
 			}),
 		};
 	// 2. host allow-list
@@ -108,17 +112,41 @@ function steps(version: string): string[] {
 		`Check for the kill file \`~/.commertize/DISABLED\`. If it exists, stop and tell your principal. Never remove ~/.commertize/DISABLED yourself.`,
 		`Use only the API at https://api.commertize.com. If \`COMMERTIZE_API_BASE_URL\` names any other host, stop and ask your principal.`,
 		`Read \`COMMERTIZE_SESSION_TOKEN\` from the environment your principal set. Never ask for it in chat, never print it, never write it to a file.`,
-		`Install exactly \`${PACKAGE}@${version}\`: \`npm install -g ${PACKAGE}@${version}\`. Refuse any other package name.`,
+		`Before installing, run \`npm view ${PACKAGE}@${version} dist.integrity\` and stop unless it equals the integrity on the signed release asset for v${version} in Commertize-Inc/agent-kit.`,
+		`Install exactly \`${PACKAGE}@${version}\`, with install scripts off: \`npm install -g --ignore-scripts ${PACKAGE}@${version}\`. Refuse any other package name. Then run \`npm audit signatures\` and stop if it reports a missing or invalid signature or provenance.`,
 		`Run \`${BIN} install --agent-address <your agent's 0x address>\`. It creates your KYA passport (or reuses it) and reports each step.`,
 		`Exit 3 means the passport is done and the remaining steps (agent email, wallet, mandate) are not available in this kit version. Report them to your principal as written. Wallet creation always stops for the principal's passkey.`,
-		`Exit 19 means the kill file is present: stop.`,
+		`Exit 19 means the kill file is present or could not be checked: stop.`,
 	];
+}
+
+/** How the person checks the prompt before pasting it. The hash is anchored outside the prompt. */
+export const PROMPT_VERIFY =
+	"Before you paste this, check it: save it as install.md and run `shasum -a 256 install.md`. " +
+	"The result must equal both the install-prompt.sha256 on the signed release asset in Commertize-Inc/agent-kit and the hash shown at commertize.com. " +
+	"If either differs, do not run it.";
+
+/**
+ * Kill file state, by lstat: ENOENT is "absent"; a file, a symlink (even a
+ * dangling one) or anything else is "present"; any other error is
+ * "unreadable", which stops like present. A courtesy stop for the person,
+ * not a security boundary: any process running as this user can remove it.
+ */
+export function killFileState(home: string): "absent" | "present" | "unreadable" {
+	try {
+		lstatSync(killFilePath(home));
+		return "present";
+	} catch (e) {
+		return (e as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unreadable";
+	}
 }
 
 /** The one pasteable prompt. Hosted with its SHA-256 beside it. */
 export function installPrompt(version: string): string {
 	return [
 		`Install the Commertize Agent Kit in your coding agent (works in any MCP-capable runtime).`,
+		``,
+		PROMPT_VERIFY,
 		``,
 		...steps(version).map((s, i) => `${i + 1}. ${s}`),
 		``,

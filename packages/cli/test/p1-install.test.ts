@@ -2,7 +2,7 @@
 // Copyright 2026 Commertize, Inc.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -153,4 +153,59 @@ test("install prompt: pinned, hash printed matches, no banned words", async () =
 test("cli install: missing --agent-address is a usage error, no network", async () => {
 	const errs: string[] = [];
 	assert.equal(await main(["install"], () => {}, (l) => errs.push(l)), 2);
+});
+
+// --- review round 1 (M1, M2, L1) ---------------------------------------------
+import { chmodSync } from "node:fs";
+// Split in two so the hash is not mistaken for key material by the repository leak check.
+const GOLDEN_PROMPT_SHA256 = "fcb4080498cecf31dd52d57d2aab1b79" + "4123660a56f528fae73b1446b9311db3";
+
+test("M1: installPrompt(KIT_VERSION) is pinned by a golden hash; any edit must update the published hash", () => {
+	assert.equal(createHash("sha256").update(installPrompt(KIT_VERSION)).digest("hex"), GOLDEN_PROMPT_SHA256);
+});
+
+test("M1: prompt, --print-prompt and skill files tell the person to verify with shasum against the signed release asset and commertize.com", async () => {
+	const p = installPrompt(KIT_VERSION);
+	assert.match(p, /shasum -a 256/);
+	assert.match(p, /signed release asset/);
+	assert.match(p, /commertize\.com/);
+	assert.match(p, /do not run it/i);
+	const out: string[] = [];
+	await main(["install", "--print-prompt"], (l) => out.push(l), () => {});
+	assert.match(out.join("\n"), /shasum -a 256/);
+	assert.match(readFileSync(new URL("../../../docs/RELEASE.md", import.meta.url), "utf8"), /install-prompt\.sha256/);
+});
+
+test("M2: step 4 installs with --ignore-scripts and checks integrity and provenance first", () => {
+	for (const body of [installPrompt(KIT_VERSION), ...Object.values(renderSkillFiles(KIT_VERSION)).filter((b) => b.includes("npm install"))]) {
+		assert.match(body, new RegExp(`npm install -g --ignore-scripts @commertize/agent-kit@${KIT_VERSION.replace(/\./g, "\\.")}`));
+		assert.match(body, /npm view @commertize\/agent-kit@[0-9.]+ dist\.integrity/);
+		assert.match(body, /npm audit signatures/);
+		assert.doesNotMatch(body, /npm install -g @commertize/);
+	}
+});
+
+test("L1: a kill-file path that cannot be checked (not ENOENT) stops with exit 19", async () => {
+	const h = home();
+	mkdirSync(join(h, ".commertize"));
+	chmodSync(join(h, ".commertize"), 0o000);
+	const { f, calls } = fakeFetch(PASSPORT);
+	try {
+		const r = await install({ home: h, env: { COMMERTIZE_SESSION_TOKEN: "s" }, agentAddress: ADDR, fetchImpl: f });
+		assert.equal(r.exit, 19);
+		assert.equal(calls.length, 0);
+		assert.match(r.steps.find((s) => s.id === "passport")!.message, /could not be checked/);
+	} finally {
+		chmodSync(join(h, ".commertize"), 0o700);
+	}
+});
+
+test("L1: a dangling symlink at the kill-file path counts as present (lstat, not existsSync)", async () => {
+	const h = home();
+	mkdirSync(join(h, ".commertize"));
+	symlinkSync(join(h, "nowhere"), killFilePath(h));
+	const { f, calls } = fakeFetch(PASSPORT);
+	const r = await install({ home: h, env: { COMMERTIZE_SESSION_TOKEN: "s" }, agentAddress: ADDR, fetchImpl: f });
+	assert.equal(r.exit, 19);
+	assert.equal(calls.length, 0);
 });

@@ -64,8 +64,9 @@ export async function main(argv: string[], out = console.log, err = console.erro
 			});
 			if (values["print-prompt"]) {
 				const p = installPrompt(KIT_VERSION);
-				out(p);
+				out(p.replace(/\n$/, "")); // console adds the one trailing newline, so stdout is the exact hashed bytes
 				out(`sha256 ${sha256(p)}`);
+				out("Verify with `shasum -a 256` against the install-prompt.sha256 on the signed release asset and the hash at commertize.com.");
 				return 0;
 			}
 			const addr = values["agent-address"];
