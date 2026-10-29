@@ -165,9 +165,21 @@ commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH]
   the server every time; `wallet` does not check it.
 - `identity show` reads the agent's passport and its KYA check record. Every
   check row is shown, including a failed one; a row without a result makes
-  the command refuse (exit 1) rather than hide it. If the check record
-  answers 404 (not available for this passport on this deployment), `checks`
-  is `null` with a note: it is never reported as an empty list.
+  the command refuse (exit 1) rather than hide it. The passport state is the
+  raw `kya_state` code as served. If the check record answers 404 (switched
+  off, or not yours: the two look the same), the passport is still shown,
+  `checks` is `null`, and the command exits 4 with reason `route_not_open`:
+  it is never reported as an empty list.
+- `identity credential`, `agent update`, and `register` with `--name`,
+  `--description` or `--homepage` are Not open on this network: each checks
+  its flags locally (exit 2 on a bad value), then exits 4 with reason
+  `route_not_open` and sends nothing.
+- **Upgrading (breaking JSON change).** The passport state key is now
+  `kya_state` (the raw served code) in every JSON output: `whoami`
+  (`data.agent`), `agents` (`data.agents[]`), `mandate show` (`data.agent`)
+  and `identity show` (`data.passport`). The old `kyaStatus` key is gone
+  from all four. `identity show` also exits 4 (not 0) when the check
+  record answers 404.
 - `wallet balance` reads Base over the public RPC endpoints
   (mainnet.base.org, sepolia.base.org). It checks the chain id before any
   balance read, uses the pinned USDC contract for the network, and reports

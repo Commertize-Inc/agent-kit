@@ -121,7 +121,7 @@ export async function mandateShow(client: CommertizeClient, mandateId: string) {
 		for (const a of r.agents)
 			for (const m of a.mandates)
 				if (typeof m?.mandateId === "string" && m.mandateId.toLowerCase() === mandateId.toLowerCase())
-					return { mandate: m, agent: { passportId: a.passportId, agentAddress: a.agentAddress, kyaStatus: a.kyaStatus }, pages_read: page + 1 };
+					return { mandate: m, agent: { passportId: a.passportId, agentAddress: a.agentAddress, kya_state: a.kyaStatus }, pages_read: page + 1 };
 		if (!r.next_cursor) throw new NotFoundError("mandate", `no mandate ${mandateId} under your account`);
 		cursor = r.next_cursor;
 	}
@@ -192,7 +192,7 @@ export async function whoami(client: CommertizeClient, o: WhoamiOptions) {
 	} else if (r.agents.length === 1 && !r.next_cursor) agent = r.agents[0]!;
 	return {
 		principal: { kyb: r.kyb },
-		agent: agent ? { passportId: agent.passportId, agentAddress: agent.agentAddress, kyaStatus: agent.kyaStatus } : null,
+		agent: agent ? { passportId: agent.passportId, agentAddress: agent.agentAddress, kya_state: agent.kyaStatus } : null,
 		mandates: agent ? agent.mandates : [],
 		agents_count: r.agents.length,
 		agents_truncated: r.next_cursor !== null,

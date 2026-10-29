@@ -126,9 +126,9 @@ test("identity show: the passport and every KYA check row (malformed rows kept w
 
 test("identity show: a switched-off check record (404) is reported as unavailable, never as an empty list; a malformed answer is refused", async () => {
 	const off = await run(["identity", "show", "--agent", P1], { [AGENTS]: { body: page([agent(P1, A1)]) } });
-	assert.equal(off.code, 0);
+	assert.equal(off.code, 4, "a 404 is Not open (K-2b), not ok");
 	assert.equal(off.o.data.checks, null);
-	assert.match(off.o.data.checks_note, /not available for this passport on this deployment/);
+	assert.match(off.o.data.checks_note, /^Not open: identity show is not open on this network\./);
 	const bad = await run(["identity", "show", "--agent", P1], { [AGENTS]: { body: page([agent(P1, A1)]) }, [`/kya/passports/${P1}/checks`]: { body: { checks: "all good" } } });
 	assert.equal(bad.code, 1);
 	assert.equal(bad.o.hand_back.reason, "api_error");

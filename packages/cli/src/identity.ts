@@ -6,13 +6,14 @@
  * passport's KYA check record. Two reads: GET /mandates/principal/agents,
  * then GET /kya/passports/:pid/checks. Read only.
  *
- * A 404 from the check route (switched off on the deployment, or no record
- * for this passport there) is reported as `checks: null` with the reason,
+ * A 404 from the check route (switched off on the deployment, or not yours:
+ * the two cannot be told apart) is `checks: null` with the NOT_OPEN text and exit 4,
  * never as "no checks": an empty list and an unavailable record differ.
  * Check rows are never dropped: a row without a result refuses the answer.
  */
 
 import { ApiError, CommertizeClient, KitConfigError } from "./client.ts";
+import { notOpen } from "./handback.ts";
 import { AGENTS_PAGE_MAX, listAgents, NotFoundError, UnexpectedAnswerError } from "./whoami.ts";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -60,13 +61,14 @@ export async function identityShow(client: CommertizeClient, ref: string) {
 		});
 	} catch (e) {
 		if (!(e instanceof ApiError) || e.status !== 404) throw e;
-		checks_note = "the KYA check record answered 404: it is not available for this passport on this deployment";
+		checks_note = notOpen("identity show");
 	}
 	return {
 		passport: {
 			passportId: a.passportId,
 			agentAddress: a.agentAddress,
-			kyaStatus: a.kyaStatus,
+			// The served state code, raw. The kit never turns it into a label of its own.
+			kya_state: a.kyaStatus,
 			createdAt: typeof a.createdAt === "string" ? a.createdAt : null,
 			revokedAt: typeof a.revokedAt === "string" ? a.revokedAt : null,
 		},
