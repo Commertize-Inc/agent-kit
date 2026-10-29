@@ -141,10 +141,12 @@ export function snapshotPayload(v: unknown, depth = 0): unknown {
 	if (v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
 	if (typeof v !== "object" || utilTypes.isProxy(v) || !isPlain(v)) throw new NotAllowlistedError("payload holds something other than plain data");
 	if (Object.getOwnPropertySymbols(v).length > 0) throw new NotAllowlistedError("payload has a symbol key");
-	const out: Record<string, unknown> = {};
+	// A null-prototype copy built with defineProperty: no key can reach a prototype setter.
+	const out: Record<string, unknown> = Object.create(null);
 	for (const [k, d] of Object.entries(Object.getOwnPropertyDescriptors(v))) {
 		if (!("value" in d) || d.get !== undefined || d.set !== undefined) throw new NotAllowlistedError(`payload field ${JSON.stringify(k).slice(0, 40)} is an accessor`);
-		out[k] = snapshotPayload(d.value, depth + 1);
+		if (k === "__proto__" || k === "constructor" || k === "prototype") throw new NotAllowlistedError(`payload has a reserved key ${k}`);
+		Object.defineProperty(out, k, { value: snapshotPayload(d.value, depth + 1), enumerable: true, writable: true, configurable: true });
 	}
 	return JSON.parse(JSON.stringify(out));
 }

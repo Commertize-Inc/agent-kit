@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CommertizeClient } from "../src/index.ts";
 import { checkValue, type Keychain, type KeyName } from "../src/keychain.ts";
-import { ATTEST_DOMAIN, ATTEST_TYPES, attestDigest, checkAttestPayload, NotAllowlistedError, signerAttest } from "../src/attest.ts";
+import { ATTEST_DOMAIN, ATTEST_TYPES, attestDigest, checkAttestPayload, NotAllowlistedError, signerAttest, snapshotPayload } from "../src/attest.ts";
 import { DisabledError, enableSigning, killFilePath } from "../src/receiptsigner.ts";
 import { SIGNER_KEY, signerInit } from "../src/signer.ts";
 import { canonicalize } from "../src/canonical.ts";
@@ -309,4 +309,24 @@ test("mandate request / request-change --caps never build a client and never fet
 	}
 	assert.equal(built, 0, "no client built");
 	assert.equal(fetched.length, 0, "no fetch");
+});
+
+test("review LOW-2: an own __proto__, constructor or prototype key is refused at any depth, never stripped and signed", () => {
+	const k = withKey();
+	const home = enabledHome();
+	const before = k.reads();
+	for (const key of ["__proto__", "constructor", "prototype"]) {
+		const top = JSON.parse(JSON.stringify(mandateReq()).replace(/^\{/, `{"${key}":{"x":1},`));
+		const inMsg = JSON.parse(JSON.stringify(mandateReq()).replace('"message":{', `"message":{"${key}":{"x":1},`));
+		const inCaps = JSON.parse(JSON.stringify(mandateReq()).replace('"caps":{', `"caps":{"${key}":"1",`));
+		for (const p of [top, inMsg, inCaps]) assert.throws(() => signerAttest(k.kc, home, p, NOW), NotAllowlistedError, key);
+	}
+	assert.equal(k.reads(), before);
+});
+
+test("review LOW-2: snapshotPayload names the reserved key (explicit refusal, not only the field-count check)", () => {
+	for (const key of ["__proto__", "constructor", "prototype"])
+		assert.throws(() => snapshotPayload(JSON.parse(`{"a":{"${key}":1}}`)), /reserved key/, key);
+	const copy = snapshotPayload({ a: { b: "c" } }) as Record<string, unknown>;
+	assert.equal(Object.getPrototypeOf(copy), Object.prototype, "the signed copy is plain JSON data");
 });
