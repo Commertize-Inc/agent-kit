@@ -3,7 +3,7 @@
 // K-6b: one signed CAS receipt per settled serve call (existing receipt signer path, off by default), and service publish (Not open).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addressOf, AGENT_KEY } from "../src/agentkey.ts";
@@ -11,7 +11,7 @@ import { signDigest, recoverAddress } from "../src/secp256k1.ts";
 import { checkSequence, recordHash, sha256, validateReceipt, type Receipt } from "../src/cas.ts";
 import { agentKeyReceiptLog, disableSigning, enableSigning, receiptDigest } from "../src/receiptsigner.ts";
 import { checkValue, type Keychain, type KeyName } from "../src/keychain.ts";
-import { OperatorSeller, parseServeConfig, transferAuthorizationDigest, type Authorization } from "../src/seller.ts";
+import { OperatorSeller, parseServeConfig, serveKillFilePath, transferAuthorizationDigest, type Authorization } from "../src/seller.ts";
 import { serveEvidence, serveReceiptHook } from "../src/servereceipt.ts";
 import { main } from "../src/cli.ts";
 
@@ -155,6 +155,17 @@ test("service publish: kill file first, then the config, then Not open (exit 4);
 	assert.equal(r.code, 4);
 	assert.equal(r.o.error.code, "route_missing");
 	assert.match(r.o.error.message, /\/v1\/directory\/services/);
+	assert.equal(r.built, 0);
+});
+
+test("service publish: the serve kill file stops it too (exit 19), before the config is read", async () => {
+	const home = mkdtempSync(join(tmpdir(), "kit-k6b-home-"));
+	enableSigning(home);
+	mkdirSync(join(home, ".commertize", "serve"), { recursive: true });
+	writeFileSync(serveKillFilePath(home), "off\n");
+	const r = await runCli(["service", "publish", "--config", join(home, "absent.json")], home);
+	assert.equal(r.code, 19);
+	assert.equal(r.o.hand_back.reason, "disabled");
 	assert.equal(r.built, 0);
 });
 

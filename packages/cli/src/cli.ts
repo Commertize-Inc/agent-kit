@@ -741,7 +741,8 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		if (sub !== "publish") throw new UsageError("service needs publish, unpublish or show");
 		// A listing is a write: the kit kill file first, then the local config, then the route (Not open).
 		const { values } = parse(rest.slice(1), { config: { type: "string" } });
-		assertNotDisabled(home);
+		// The serve kill file and the signing kill file, the same check as serve start.
+		assertServeEnabled(home);
 		const path = (values.config as string | undefined) ?? "commertize.serve.json";
 		let raw: unknown;
 		try {
