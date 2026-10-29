@@ -6,8 +6,8 @@ import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 import { ApiError, CommertizeClient, KitConfigError, readEnv } from "./client.ts";
 import { AUTH_EXIT, authComplete, authStart, checkRequestId, type AuthStartResult, type CredentialSink } from "./auth.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EVENT_TYPES, history, listen, matchesFilter, POLL_FLOOR_MS, watchStop, type EventFilter, type KitEvent } from "./events.ts";
@@ -20,7 +20,8 @@ import { skillCheck } from "./skillcheck.ts";
 import { findAgent, identityShow } from "./identity.ts";
 import { checkProfileName, readActiveAgent, writeActiveAgent, type ActiveAgent } from "./profile.ts";
 import { balance, isNetwork, NETWORKS, TOKENS, type Token } from "./chain.ts";
-import { signerInit, signerStatus, SignerExistsError } from "./signer.ts";
+import { signerInit, signerStatus, SignerExistsError, SignerNotOpenError } from "./signer.ts";
+import { ATTEST_DOMAIN, checkAttestPayload, NotAllowlistedError } from "./attest.ts";
 import { mandateRevoke } from "./mandate.ts";
 import { AgentKeyExistsError, agentKeyStatus, classifyTypedData, importAgentKey, readTypedDataFile } from "./agentkey.ts";
 import { agentKeyReceiptLog, assertNotDisabled, disableSigning, DisabledError, enableSigning, ensureDefaultDisabled, receiptDigest } from "./receiptsigner.ts";
@@ -101,6 +102,11 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              hand back to the person you act for: they create
                                              or change and sign the mandate (exit 5); the kit
                                              never writes or signs a mandate
+  commertize-agent mandate request --caps <file> --level L1|L2 --expires <ISO time> [--agent passportId]
+  commertize-agent mandate request-change --caps <file> --mandate <mandateId>
+                                             check a mandate request or a cap increase request on
+                                             this machine; sending it is Not open (exit 4) and
+                                             nothing is sent; exit 19 if ~/.commertize/DISABLED
   commertize-agent mandate revoke <mandateId> --confirm | --dry-run
                                              end one of your mandates; the state is read back
   commertize-agent signer init | status | link
@@ -277,6 +283,15 @@ function errorResult(command: string, e: unknown): Result {
 			command,
 			exit_code: EXIT.not_open,
 			error: { code: "route_missing", message: e.message },
+			next_step: "commertize-agent routes --json",
+			hand_back: handBack("route_not_open"),
+			textErr: [`commertize-agent: ${e.message}`],
+		};
+	if (e instanceof SignerNotOpenError || e instanceof NotAllowlistedError)
+		return {
+			command,
+			exit_code: EXIT.not_open,
+			error: { code: "not_open", message: e.message },
 			next_step: "commertize-agent routes --json",
 			hand_back: handBack("route_not_open"),
 			textErr: [`commertize-agent: ${e.message}`],
@@ -950,10 +965,51 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 	if (cmd === "mandate") {
 		const { values, positionals } = parse(
 			rest,
-			{ "allow-host": { type: "string" }, confirm: { type: "boolean" }, "dry-run": { type: "boolean" } },
+			{ "allow-host": { type: "string" }, confirm: { type: "boolean" }, "dry-run": { type: "boolean" }, caps: { type: "string" }, level: { type: "string" }, expires: { type: "string" }, agent: { type: "string" }, mandate: { type: "string" }, profile: { type: "string" } },
 			true
 		);
 		const sub = positionals[0];
+		if ((sub === "request" || sub === "request-change") && values.caps !== undefined) {
+			// A pending request for the person to approve in the browser. Gated like every write: kill file first.
+			if (positionals.length !== 1 || values.confirm !== undefined || values["dry-run"] !== undefined || values["allow-host"] !== undefined)
+				throw new UsageError(`mandate ${sub} takes --caps <file>${sub === "request" ? " --level L1|L2 --expires <ISO time>" : " --mandate <mandateId>"}`);
+			assertNotDisabled(home);
+			const file = values.caps as string;
+			if (!statSync(file).isFile()) throw new KitConfigError(`${file} is not a regular file`);
+			const raw = readFileSync(file, "utf8");
+			if (raw.length > 65536) throw new UsageError("--caps file is larger than 64 KiB");
+			let caps: unknown;
+			try {
+				caps = JSON.parse(raw);
+			} catch {
+				throw new UsageError("--caps file is not JSON");
+			}
+			const nonce = randomBytes(32).toString("hex");
+			let message: Record<string, unknown>;
+			if (sub === "request") {
+				if (values.mandate !== undefined) throw new UsageError("--mandate goes with mandate request-change");
+				const passportId = (values.agent as string | undefined) ?? activeAgent(values)?.passportId;
+				if (!passportId) throw new NoActiveAgentError();
+				message = { passportId, level: values.level, caps, expiresAt: values.expires, nonce };
+			} else {
+				if (values.level !== undefined || values.expires !== undefined || values.agent !== undefined)
+					throw new UsageError("mandate request-change takes --mandate <mandateId> and --caps <file> with fromCaps and toCaps");
+				const c = (caps ?? {}) as Record<string, unknown>;
+				message = { mandateId: values.mandate, fromCaps: c.fromCaps, toCaps: c.toCaps, nonce };
+				if (typeof caps !== "object" || caps === null || Object.keys(caps).length !== 2) throw new UsageError("--caps file for request-change has exactly fromCaps and toCaps");
+			}
+			const primaryType = sub === "request" ? "MandateSignatureRequest" : "CapIncreaseRequest";
+			try {
+				checkAttestPayload({ domain: { ...ATTEST_DOMAIN }, primaryType, message });
+			} catch (e) {
+				if (e instanceof NotAllowlistedError) throw new UsageError(e.message);
+				throw e;
+			}
+			// The route that would carry the request is Not open: nothing is signed and nothing is sent.
+			throw new RouteMissingError(ROUTES.mandateRequestCreate);
+		}
+		if (["level", "expires", "agent", "mandate", "profile"].some((k) => values[k] !== undefined))
+			throw new UsageError("--level, --expires, --agent, --mandate and --profile go with mandate request --caps or request-change --caps");
 		if (sub === "request" || sub === "request-change") {
 			// No route carries a mandate request from an agent: the principal creates or changes it in the dashboard.
 			if (positionals.length !== 1 || values.confirm !== undefined || values["dry-run"] !== undefined || values["allow-host"] !== undefined)
@@ -1006,6 +1062,8 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		const { positionals } = parse(rest, {}, true);
 		const sub = positionals[0];
 		if (positionals.length !== 1 || (sub !== "init" && sub !== "status" && sub !== "link")) throw new UsageError("signer needs exactly: init, status or link");
+		// The kill file (and signing off by default) stops init and link before any key read or write.
+		if (sub !== "status") assertNotDisabled(home);
 		if (sub === "init") {
 			const s = signerInit(kc);
 			return {

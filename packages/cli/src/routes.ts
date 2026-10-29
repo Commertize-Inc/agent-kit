@@ -83,6 +83,15 @@ export const ROUTES = {
 		pending: "Not open",
 		note: "Headless pairing: your agent key asks, you approve in the dashboard. Answers { requestId, signinUrl, expiresIn }.",
 	},
+	mandateRequestCreate: {
+		id: "mandateRequestCreate",
+		method: "POST",
+		path: "/mandates/principal/requests",
+		auth: "session",
+		status: "missing",
+		pending: "Not open",
+		note: "A pending mandate request (or cap increase request) from your agent, attested by its device signer; you approve and sign in the dashboard.",
+	},
 	pairingStatus: {
 		id: "pairingStatus",
 		method: "GET",

@@ -44,7 +44,15 @@ export interface SignerInfo {
 	fingerprint: string;
 }
 
-function infoFromPrivate(pkcs8b64u: string): SignerInfo {
+/** No supported OS keychain here: the signer is Not open on this machine (exit 4). There is no file fallback. */
+export class SignerNotOpenError extends Error {
+	constructor() {
+		super("no supported OS keychain here (macOS /usr/bin/security); a signer key is never kept in a file");
+		this.name = "SignerNotOpenError";
+	}
+}
+
+export function signerInfoFromPrivate(pkcs8b64u: string): SignerInfo {
 	let key;
 	try {
 		key = createPrivateKey({ key: Buffer.from(pkcs8b64u, "base64url"), format: "der", type: "pkcs8" });
@@ -57,8 +65,8 @@ function infoFromPrivate(pkcs8b64u: string): SignerInfo {
 	return { curve: "P-256", publicKey: spki.toString("base64url"), fingerprint: "sha256:" + createHash("sha256").update(spki).digest("hex") };
 }
 
-function needKeychain(kc: Keychain | undefined): Keychain {
-	if (!kc || !kc.available()) throw new KitConfigError("no supported OS keychain here (macOS /usr/bin/security); a signer key is never kept in a file");
+export function needKeychain(kc: Keychain | undefined): Keychain {
+	if (!kc || !kc.available()) throw new SignerNotOpenError();
 	return kc;
 }
 
@@ -69,7 +77,7 @@ export function signerInit(kc: Keychain | undefined): SignerInfo {
 	if (k.has(SIGNER_KEY)) throw new SignerExistsError();
 	const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 	const pkcs8 = (privateKey.export({ format: "der", type: "pkcs8" }) as Buffer).toString("base64url");
-	const want = infoFromPrivate(pkcs8);
+	const want = signerInfoFromPrivate(pkcs8);
 	// Create-only: if another init got there first, the keychain refuses and that key is left alone.
 	if (k.add(SIGNER_KEY, pkcs8) === "exists") throw new SignerExistsError();
 	// Read it back: report only a key the keychain actually holds.
@@ -88,5 +96,5 @@ export function signerInit(kc: Keychain | undefined): SignerInfo {
 export function signerStatus(kc: Keychain | undefined): { stored: boolean; signer: SignerInfo | null } {
 	const k = needKeychain(kc);
 	const v = k.get(SIGNER_KEY);
-	return v ? { stored: true, signer: infoFromPrivate(v) } : { stored: false, signer: null };
+	return v ? { stored: true, signer: signerInfoFromPrivate(v) } : { stored: false, signer: null };
 }
