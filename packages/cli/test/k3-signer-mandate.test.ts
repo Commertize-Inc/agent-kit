@@ -8,6 +8,18 @@ import { CommertizeClient } from "../src/index.ts";
 import { checkValue, osKeychain, type Keychain, type KeyName, type Runner } from "../src/keychain.ts";
 import { SIGNER_KEY } from "../src/signer.ts";
 import { main } from "../src/cli.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { enableSigning } from "../src/receiptsigner.ts";
+
+/** A home where the person has enabled signing (signer init and link are gated by the kill file). */
+const enabledHome = () => {
+	const h = mkdtempSync(join(tmpdir(), "kit-k3-home-"));
+	enableSigning(h);
+	return h;
+};
+const ENABLED_HOME = enabledHome();
 
 const ENV = { baseUrl: "https://api.commertize.com", sessionToken: "SESSION-SECRET" };
 const A1 = "0x" + "a".repeat(40);
@@ -27,7 +39,7 @@ function memKeychain(opts: { available?: boolean; tamperRead?: boolean } = {}) {
 	return { kc, store };
 }
 
-async function run(argv: string[], o: { kc?: Keychain; api?: (method: string, path: string) => { status?: number; body: unknown } } = {}) {
+async function run(argv: string[], o: { kc?: Keychain; home?: string; api?: (method: string, path: string) => { status?: number; body: unknown } } = {}) {
 	const calls: { method: string; path: string; auth?: string }[] = [];
 	const f = (async (input: unknown, init?: RequestInit) => {
 		const u = new URL(String(input));
@@ -37,7 +49,7 @@ async function run(argv: string[], o: { kc?: Keychain; api?: (method: string, pa
 		return new Response(JSON.stringify(a.body), { status: a.status ?? 200 });
 	}) as typeof fetch;
 	const out: string[] = [];
-	const code = await main([...argv, "--json"], (l) => out.push(l), () => {}, { client: () => new CommertizeClient(ENV, f), keychain: o.kc, signals: false });
+	const code = await main([...argv, "--json"], (l) => out.push(l), () => {}, { client: () => new CommertizeClient(ENV, f), keychain: o.kc, home: o.home ?? ENABLED_HOME, signals: false });
 	return { code, o: JSON.parse(out.at(-1)!), calls, raw: out.join("\n") };
 }
 
@@ -73,7 +85,9 @@ test("signer init never replaces a stored key; without a keychain nothing is sto
 	assert.equal(store.get(SIGNER_KEY), first);
 	const none = memKeychain({ available: false });
 	const n = await run(["signer", "init"], { kc: none.kc });
-	assert.equal(n.code, 1);
+	// K-3: no supported OS keychain = the signer is Not open here (exit 4), never a file fallback.
+	assert.equal(n.code, 4);
+	assert.equal(n.o.error.code, "not_open");
 	assert.match(n.o.error.message, /never kept in a file/);
 	assert.equal(none.store.size, 0);
 	const t = memKeychain({ tamperRead: true });
