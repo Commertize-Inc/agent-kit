@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { EVENT_TYPES, history, listen, matchesFilter, POLL_FLOOR_MS, watchStop, type EventFilter, type KitEvent } from "./events.ts";
 import { EventHub, makeHandler, SERVE_HOST } from "./serve.ts";
 import { drain, DrainBusyError, DrainSourceChangedError, DrainUsageError, DRAIN_LIMIT_MAX } from "./drain.ts";
-import { EXIT, handBack, taskFinal, type HandBack, type Reason } from "./handback.ts";
+import { EXIT, handBack, notOpen, taskFinal, type HandBack, type Reason } from "./handback.ts";
+import { AgentTextError, checkAgentFields } from "./agenttext.ts";
 import { AGENTS_PAGE_MAX, listAgents, mandateShow, NotFoundError, UnexpectedAnswerError, UUID, whoami, type CredentialSource } from "./whoami.ts";
 import { skillCheck } from "./skillcheck.ts";
 import { findAgent, identityShow } from "./identity.ts";
@@ -56,6 +57,7 @@ export const COMMANDS = [
 	"register",
 	"whoami",
 	"agents",
+	"agent",
 	"mandate",
 	"signer",
 	"identity",
@@ -76,6 +78,11 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent register --agent-address 0x... [--task-class c]... [--allow-host h]
                                              register your agent's wallet on Commertize and
                                              find the first open Work task
+      --name <s> --description <s> --homepage https://...
+                                             agent-declared text: checked locally (1-64, 1-280,
+                                             https only), then Not open (exit 4), nothing sent
+  commertize-agent agent update --agent <passportId> [--name] [--description] [--homepage]
+                                             Not open (exit 4): checked locally, nothing sent
   commertize-agent auth start [--no-wait]    start sign-in: prints the link and a request id, exits
   commertize-agent auth complete --request <id> [--wait | --no-wait] [--timeout s]
                                              check (or wait for) that sign-in; exit 0 approved,
@@ -100,7 +107,10 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              a P-256 device key in the OS keychain; linking it
                                              to an agent is Not open (exit 4)
   commertize-agent identity show [--agent 0x...|passportId] [--profile name]
-                                             that agent's passport and its KYA check record
+                                             that agent's passport, its raw kya_state code and
+                                             its KYA check record (exit 4 if that record is Not open)
+  commertize-agent identity credential [--agent passportId] [--verify]
+                                             the passport credential: Not open (exit 4), nothing sent
   commertize-agent wallet address [--agent 0x...] [--profile name]
   commertize-agent wallet balance [--network base|base-sepolia] [--token USDC|ETH] [--agent 0x...]
                                              read-only balance on Base (no key, no signing)
@@ -148,8 +158,23 @@ const USAGE = `commertize-agent ${KIT_VERSION}
 
 Environment (read, never stored): COMMERTIZE_API_BASE_URL, COMMERTIZE_SESSION_TOKEN, COMMERTIZE_API_KEY
 `;
+/** The help text, as shipped (tests lint it). */
+export const USAGE_TEXT = USAGE;
 
 const HELP_NEXT = "commertize-agent help --json";
+
+/** The NOT_OPEN refusal (apx-b58b04e86a) as a result: exit 4, route_not_open, before any client is built. */
+function notOpenResult(command: string, what: string): Result {
+	const message = notOpen(what);
+	return {
+		command,
+		exit_code: EXIT.not_open,
+		error: { code: "not_open", message },
+		next_step: "commertize-agent routes --json",
+		hand_back: handBack("route_not_open"),
+		textErr: [message],
+	};
+}
 
 export type Out = (line: string) => void;
 
@@ -238,7 +263,7 @@ export function takeJsonFlag(argv: string[]): { json: boolean; rest: string[] } 
 }
 
 function errorResult(command: string, e: unknown): Result {
-	if (e instanceof UsageError || e instanceof DrainUsageError)
+	if (e instanceof UsageError || e instanceof DrainUsageError || e instanceof AgentTextError)
 		return {
 			command,
 			exit_code: EXIT.usage,
@@ -809,9 +834,15 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			"task-class": { type: "string", multiple: true },
 			"allow-host": { type: "string" },
 			"no-wait": { type: "boolean" },
+			name: { type: "string" },
+			description: { type: "string" },
+			homepage: { type: "string" },
 		});
 		const addr = values["agent-address"] as string | undefined;
 		if (!addr) throw new UsageError("register needs --agent-address 0x...");
+		// Agent-declared text has no server route on this network. It is checked locally, then refused
+		// before any client or request: never dropped silently into a nameless passport.
+		if (Object.keys(checkAgentFields(values)).length > 0) return notOpenResult(cmd, "register --name, --description and --homepage");
 		const client = mkClient(values["allow-host"] as string | undefined, err);
 		if (values["no-wait"] && !client.env.sessionToken) {
 			if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) throw new KitConfigError("--agent-address must be a 0x-prefixed 20-byte address");
@@ -858,6 +889,15 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 				`Session token: ${w.credentials.session_token}; API key: ${w.credentials.api_key}`,
 			],
 		};
+	}
+	if (cmd === "agent") {
+		const { values, positionals } = parse(rest, { agent: { type: "string" }, name: { type: "string" }, description: { type: "string" }, homepage: { type: "string" } }, true);
+		if (positionals.length !== 1 || positionals[0] !== "update") throw new UsageError("agent needs exactly: update --agent <passportId> and a field");
+		const pid = values.agent as string | undefined;
+		if (!pid || !UUID.test(pid)) throw new UsageError("agent update needs --agent <passportId>");
+		if (Object.keys(checkAgentFields(values)).length === 0) throw new UsageError("agent update needs at least one of --name, --description, --homepage");
+		// The passport edit route does not exist on this network: refused before any client or request.
+		return notOpenResult(cmd, "agent update");
 	}
 	if (cmd === "agents") {
 		const { values } = parse(rest, {
@@ -991,18 +1031,24 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		};
 	}
 	if (cmd === "identity") {
-		const { values, positionals } = parse(rest, { agent: { type: "string" }, profile: { type: "string" }, "allow-host": { type: "string" } }, true);
-		if (positionals.length !== 1 || positionals[0] !== "show") throw new UsageError("identity needs exactly: show");
+		const { values, positionals } = parse(rest, { agent: { type: "string" }, profile: { type: "string" }, "allow-host": { type: "string" }, verify: { type: "boolean" } }, true);
+		if (positionals.length !== 1 || (positionals[0] !== "show" && positionals[0] !== "credential")) throw new UsageError("identity needs exactly: show, or credential");
+		// The credential read route does not exist on this network: refused before any client or request.
+		if (positionals[0] === "credential") return notOpenResult(cmd, "identity credential");
+		if (values.verify !== undefined) throw new UsageError("--verify goes with identity credential");
 		const ref = (values.agent as string | undefined) ?? activeAgent(values)?.passportId;
 		if (!ref) throw new NoActiveAgentError();
 		const r = await identityShow(mkClient(values["allow-host"] as string | undefined, err), ref);
+		// A 404 from the check route is ambiguous (switched off, or not yours): Not open, never "no checks".
+		const closed = r.checks === null;
 		return {
 			command: cmd,
-			exit_code: EXIT.ok,
+			exit_code: closed ? EXIT.not_open : EXIT.ok,
 			data: r,
-			next_step: null,
+			...(closed ? { error: { code: "not_open" as const, message: r.checks_note ?? "" }, hand_back: handBack("route_not_open"), next_step: "commertize-agent routes --json" } : { next_step: null }),
 			text: [
-				`Agent ${textSafe(r.passport.agentAddress)} (${textSafe(r.passport.passportId)}), KYA ${textSafe(r.passport.kyaStatus)}`,
+				`Agent ${textSafe(r.passport.agentAddress)} (${textSafe(r.passport.passportId)}), kya_state ${textSafe(r.passport.kya_state)}`,
+				r.passport.revokedAt ? `Revoked ${textSafe(r.passport.revokedAt)}` : `Created ${textSafe(r.passport.createdAt ?? "(no date)")}`,
 				r.checks ? `KYA checks: ${r.checks.length}` : `KYA checks: ${r.checks_note}`,
 				...(r.checks ?? []).map(
 					(c) => `  ${textSafe(c.result)}  ${textSafe(c.checkId ?? "(no check id)")}  ${textSafe(c.checkedAt ?? "(no date)")}  policy ${textSafe(c.policyVersion ?? "(none)")}`

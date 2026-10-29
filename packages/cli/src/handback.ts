@@ -50,6 +50,14 @@ export const KIT_DOCS = "https://github.com/Commertize-Inc/agent-kit#readme";
 /** Every host a hand-back URL may name. */
 export const HAND_BACK_HOSTS: ReadonlySet<string> = new Set(["app.commertize.com", "github.com"]);
 
+/**
+ * The NOT_OPEN refusal, exact text (apx-b58b04e86a). The URL is the kit docs,
+ * the same URL as the route_not_open hand-back. No dates, no promise of when.
+ */
+export function notOpen(command: string): string {
+	return `Not open: ${command} is not open on this network. See ${KIT_DOCS}.`;
+}
+
 type By = "principal" | "agent";
 const P = (path: string) => ({ by: "principal" as By, url: PRINCIPAL_APP + path });
 const A = { by: "agent" as By, url: KIT_DOCS };
