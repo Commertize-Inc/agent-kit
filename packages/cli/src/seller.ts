@@ -263,8 +263,12 @@ const DOMAIN_TYPEHASH = keccak256(enc("EIP712Domain(string name,string version,u
 const TWA_TYPEHASH = keccak256(enc("TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"));
 
 /** The EIP-712 digest of an EIP-3009 TransferWithAuthorization under the given USDC domain. */
+export function domainSeparator(usdc: UsdcNetwork): Uint8Array {
+	return keccak256(Buffer.concat([DOMAIN_TYPEHASH, keccak256(enc(usdc.name)), keccak256(enc(usdc.version)), word(BigInt(usdc.chainId)), addrWord(usdc.asset)]));
+}
+
 export function transferAuthorizationDigest(usdc: UsdcNetwork, a: Authorization): Uint8Array {
-	const domain = keccak256(Buffer.concat([DOMAIN_TYPEHASH, keccak256(enc(usdc.name)), keccak256(enc(usdc.version)), word(BigInt(usdc.chainId)), addrWord(usdc.asset)]));
+	const domain = domainSeparator(usdc);
 	const struct = keccak256(
 		Buffer.concat([TWA_TYPEHASH, addrWord(a.from), addrWord(a.to), word(BigInt(a.value)), word(BigInt(a.validAfter)), word(BigInt(a.validBefore)), Buffer.from(a.nonce.slice(2), "hex")])
 	);
@@ -319,11 +323,39 @@ export class CapLedger {
 			release: () => {
 				if (released) return;
 				released = true;
+				// Write the release first. If it fails, the entry stays counted here and on disk (fail closed); never throws.
+				try {
+					this.#persist?.({ ...e, amount: -e.amount });
+				} catch {
+					return;
+				}
 				const i = this.#entries.indexOf(e);
 				if (i >= 0) this.#entries.splice(i, 1);
-				this.#persist?.({ ...e, amount: -e.amount });
 			},
 		};
+	}
+}
+
+/**
+ * The (payer, nonce) pairs this seller has accepted for checking. Persisted before it counts, so a
+ * restart does not let an already-presented authorization reach the facilitator or the handler again.
+ * Load `entries` from the same store the operator gives the CapLedger.
+ */
+export class NonceStore {
+	readonly #seen = new Set<string>();
+	readonly #persist: ((key: string) => void) | undefined;
+	constructor(o: { entries?: string[]; persist?: (key: string) => void } = {}) {
+		for (const k of o.entries ?? []) this.#seen.add(k.toLowerCase());
+		this.#persist = o.persist;
+	}
+	has(key: string): boolean {
+		return this.#seen.has(key.toLowerCase());
+	}
+	/** Throws when the write fails; then nothing is recorded and the caller refuses the call. */
+	add(key: string): void {
+		const k = key.toLowerCase();
+		this.#persist?.(k);
+		this.#seen.add(k);
 	}
 }
 
@@ -355,6 +387,8 @@ export interface SellerDeps {
 	assertEnabled: () => void;
 	handler: (input: unknown) => Promise<unknown>;
 	caps?: CapLedger;
+	/** Accepted (payer, nonce) pairs. Give it a persisted store so a restart keeps them (in memory by default). */
+	nonces?: NonceStore;
 	now?: () => number;
 	/** After settlement: e.g. issues the receipt. Its result goes in the response headers. */
 	onSettled?: (s: { payer: string; amount: bigint; transaction: string; requestBody: Buffer; responseBody: string }) => Promise<Record<string, string>>;
@@ -371,12 +405,13 @@ const err = (status: number, code: string, message: string, reason: string, retr
 export class OperatorSeller {
 	readonly #d: SellerDeps;
 	readonly #req: PaymentRequirements;
-	readonly #seen = new Set<string>();
+	readonly #nonces: NonceStore;
 	readonly #caps: CapLedger;
 	constructor(d: SellerDeps) {
 		if (typeof d.payTo !== "string" || !ADDR.test(d.payTo) || /^0x0{40}$/.test(d.payTo)) throw new ServeConfigError("payTo must be a non-zero 0x address from the operator's mandate");
 		this.#d = d;
 		this.#caps = d.caps ?? new CapLedger();
+		this.#nonces = d.nonces ?? new NonceStore();
 		const c = d.config;
 		this.#req = {
 			scheme: "exact",
@@ -427,8 +462,12 @@ export class OperatorSeller {
 		if (!signatureMatchesPayer(p, d.config.usdc)) return err(422, "PAYMENT_INVALID", "the signature does not recover to the payer", "signature");
 		const auth = p.payload.authorization;
 		const nonceKey = `${auth.from.toLowerCase()}:${auth.nonce.toLowerCase()}`;
-		if (this.#seen.has(nonceKey)) return err(422, "PAYMENT_INVALID", "this authorization was already presented", "nonce_replay");
-		this.#seen.add(nonceKey);
+		if (this.#nonces.has(nonceKey)) return err(422, "PAYMENT_INVALID", "this authorization was already presented", "nonce_replay");
+		try {
+			this.#nonces.add(nonceKey);
+		} catch {
+			return err(503, "NONCE_STORE_UNAVAILABLE", "the local nonce store could not be written; nothing was charged", "nonce_store");
+		}
 		let screened: ScreenResult;
 		try {
 			screened = await d.screen(auth.from);

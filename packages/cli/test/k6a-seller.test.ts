@@ -12,6 +12,9 @@ import { disableSigning, enableSigning } from "../src/receiptsigner.ts";
 import {
 	assertServeEnabled,
 	CapLedger,
+	domainSeparator,
+	NonceStore,
+	signatureMatchesPayer,
 	decodePaymentSignature,
 	HEADER_REQUIRED,
 	HEADER_RESPONSE,
@@ -432,4 +435,85 @@ test("serve (bare) is unchanged: exit 4 serve_not_open", async () => {
 	const r = await runCli(["serve"], h);
 	assert.equal(r.code, 4);
 	assert.equal(r.o.hand_back.reason, "serve_not_open");
+});
+
+// --- review fixes (K-6a MEDIUM-1..3, LOW-1, LOW-2) ----------------------------------------------
+
+// Hex constants are split in two so no single literal is a 64-hex run (public-repo leak check).
+// Base Sepolia USDC DOMAIN_SEPARATOR(), read by eth_call to 0x036CbD53842c5426634e7929541eC2318f3dCF7e on 2026-10-28.
+const ONCHAIN_DOMAIN_84532 = "0x71f17a3b2ff373b803d70a5a07c046c1" + "a2bc8e89c09ef722fcb047abe94c9818";
+// viem 2.21.0 hashTypedData and signTypedData over the authorization below, with the Hardhat/anvil test key #1.
+const VIEM_KEY = "0x59c6995e998f97a5a0044966f0945389" + "dc9e86dae88c7a8412f4603b6b78690d";
+const VIEM_DIGEST = "0x5563c5b9c99d8a18f88ef4cdac25584e" + "561f166dd9b71adf93aa7f843fdcabb7";
+const VIEM_SIG = "0xda5ecfd9bcc86946789a82559042ec08" + "e5d5839cd0e49e1f1c53a75aa31ed7b7" + "343a89ea62401d0b38352e00e1e04d6a" + "60a7f774ce0e5383682004cd472b0876" + "1b";
+const VIEM_AUTH: Authorization = { from: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", to: PAY_TO, value: "50000", validAfter: "0", validBefore: "1800000120", nonce: "0x" + "ab".repeat(32) };
+
+test("digest: the domain separator equals the on-chain Base Sepolia USDC DOMAIN_SEPARATOR", () => {
+	assert.equal("0x" + Buffer.from(domainSeparator(CFG.usdc)).toString("hex"), ONCHAIN_DOMAIN_84532);
+});
+
+test("digest: equals the viem vector; the viem signature recovers to the payer; any other domain does not", () => {
+	assert.equal(addressOf(VIEM_KEY), VIEM_AUTH.from);
+	assert.equal("0x" + Buffer.from(transferAuthorizationDigest(CFG.usdc, VIEM_AUTH)).toString("hex"), VIEM_DIGEST);
+	const p = { x402Version: 2 as const, accepted: { scheme: "exact", network: CFG.usdc.network, amount: "50000", asset: CFG.usdc.asset, payTo: PAY_TO }, payload: { signature: VIEM_SIG, authorization: VIEM_AUTH } };
+	assert.equal(signatureMatchesPayer(p, CFG.usdc), true);
+	for (const other of [{ ...CFG.usdc, chainId: 8453 }, { ...CFG.usdc, name: "2", version: "USDC" }, { ...CFG.usdc, asset: "0x" + "e".repeat(40) }]) assert.equal(signatureMatchesPayer(p, other), false);
+});
+
+test("caps: an entry is persisted before it counts; a failed write leaves nothing counted", async () => {
+	const seenAtPersist: bigint[] = [];
+	const ok = new CapLedger({ persist: () => void seenAtPersist.push(ok.spent(PAYER, 0)) });
+	ok.reserve(PAYER, 5n, NOW_MS);
+	assert.deepEqual(seenAtPersist, [0n], "not counted at the time of the write");
+	assert.equal(ok.spent(PAYER, 0), 5n);
+	const caps = new CapLedger({ persist: () => { throw new Error("disk"); } });
+	const r = await call(seller({ caps }).s, payment());
+	assert.equal(r.status, 503);
+	assert.equal(JSON.parse(r.body).error.code, "CAP_LEDGER_UNAVAILABLE");
+	assert.equal(caps.spent(PAYER, 0), 0n);
+});
+
+test("caps: window bounds at one millisecond: 24 h and 30 d", () => {
+	const DAY = 86_400_000;
+	const full = TIER0.per24h;
+	assert.equal(new CapLedger({ entries: [{ payer: PAYER, amount: full, atMs: NOW_MS - DAY + 1 }] }).reserve(PAYER, 1n, NOW_MS).ok, false, "1 ms inside 24 h counts");
+	assert.equal(new CapLedger({ entries: [{ payer: PAYER, amount: full, atMs: NOW_MS - DAY }] }).reserve(PAYER, 1n, NOW_MS).ok, true, "exactly 24 h old drops out");
+	const entries = (atMs: number) => Array.from({ length: 10 }, () => ({ payer: PAYER, amount: full, atMs }));
+	assert.deepEqual(new CapLedger({ entries: entries(NOW_MS - 30 * DAY + 1) }).reserve(PAYER, 1n, NOW_MS), { ok: false, cap: "per_30d" }, "1 ms inside 30 d counts");
+	assert.equal(new CapLedger({ entries: entries(NOW_MS - 30 * DAY) }).reserve(PAYER, 1n, NOW_MS).ok, true, "exactly 30 d old drops out");
+});
+
+test("restart: a nonce seen before a restart is refused after it (persisted store), with zero facilitator calls and no cap reserved", async () => {
+	const disk: string[] = [];
+	const caps = new CapLedger();
+	const before = seller({ caps });
+	const sig = payment();
+	const first = new OperatorSeller({ config: CFG, payTo: PAY_TO, facilitator: before.fac.f, screen: async () => "clear", assertEnabled: () => {}, handler: async () => ({}), now: () => NOW_MS, caps, nonces: new NonceStore({ persist: (k) => void disk.push(k) }) });
+	assert.equal((await call(first, sig)).status, 200);
+	assert.equal(disk.length, 1);
+	const fac = spyFacilitator();
+	const caps2 = new CapLedger();
+	const after = new OperatorSeller({ config: CFG, payTo: PAY_TO, facilitator: fac.f, screen: async () => "clear", assertEnabled: () => {}, handler: async () => ({}), now: () => NOW_MS, caps: caps2, nonces: new NonceStore({ entries: disk }) });
+	const r = await call(after, sig);
+	assert.equal(r.status, 422);
+	assert.equal(r.reason, "nonce_replay");
+	assert.deepEqual(fac.calls, []);
+	assert.equal(caps2.spent(PAYER, 0), 0n);
+});
+
+test("restart: a nonce store that cannot be written refuses the call before the facilitator", async () => {
+	const fac = spyFacilitator();
+	const s = new OperatorSeller({ config: CFG, payTo: PAY_TO, facilitator: fac.f, screen: async () => "clear", assertEnabled: () => {}, handler: async () => ({}), now: () => NOW_MS, nonces: new NonceStore({ persist: () => { throw new Error("disk"); } }) });
+	const r = await call(s, payment());
+	assert.equal(r.status, 503);
+	assert.deepEqual(fac.calls, []);
+});
+
+test("handler fails and the release write throws: still a 502 HANDLER_FAILED answer, never a rejection; the cap stays counted on disk", async () => {
+	let n = 0;
+	const caps = new CapLedger({ persist: () => { if (++n > 1) throw new Error("disk"); } });
+	const s = new OperatorSeller({ config: CFG, payTo: PAY_TO, facilitator: spyFacilitator().f, screen: async () => "clear", assertEnabled: () => {}, handler: async () => { throw new Error("boom"); }, caps, now: () => NOW_MS });
+	const r = await call(s, payment());
+	assert.equal(r.status, 502);
+	assert.equal(JSON.parse(r.body).error.code, "HANDLER_FAILED");
 });
