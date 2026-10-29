@@ -110,6 +110,15 @@ export const ROUTES = {
 		pending: "Not open",
 		note: "The meter fee of record and the price floor for a self-hosted paid endpoint.",
 	},
+	directoryServicePublish: {
+		id: "directoryServicePublish",
+		method: "POST",
+		path: "/v1/directory/services",
+		auth: "session",
+		status: "missing",
+		pending: "Not open",
+		note: "Lists a self-hosted paid endpoint in the Directory (service publish). The record is signed by the operator.",
+	},
 	pairingStatus: {
 		id: "pairingStatus",
 		method: "GET",
