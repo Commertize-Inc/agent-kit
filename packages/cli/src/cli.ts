@@ -40,6 +40,7 @@ import { init, TEMPLATES } from "./init.ts";
 import { MCP_TOOLS_CHECKED_AT, mcpClientConfig } from "./mcp.ts";
 import { register } from "./register.ts";
 import { ROUTES, ROUTES_CHECKED_AT, RouteMissingError } from "./routes.ts";
+import { assertServeEnabled, parseServeConfig, ServeConfigError } from "./seller.ts";
 
 export const KIT_VERSION = "0.2.0";
 
@@ -146,6 +147,9 @@ const USAGE = `commertize-agent ${KIT_VERSION}
                                              that task's events from a file events listen wrote
   commertize-agent serve                     reserved: serving your own handler as a paid
                                              endpoint is Not open (exit 4); see events serve
+  commertize-agent serve start [--config commertize.serve.json]
+                                             checks the serve kill file and your config on this
+                                             machine, then Not open (exit 4): nothing bound or sent
   commertize-agent routes                    every route the kit calls, live or not open
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
@@ -704,6 +708,27 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 			};
 		}
 		throw new UsageError("auth needs start or complete");
+	}
+	if (cmd === "serve" && rest[0] === "start") {
+		// Order: kill file, then the local config, then the online steps. Nothing is bound and nothing is sent.
+		const { values } = parse(rest.slice(1), { config: { type: "string" } });
+		assertServeEnabled(home);
+		const path = (values.config as string | undefined) ?? "commertize.serve.json";
+		let raw: unknown;
+		try {
+			if (statSync(path).size > 65_536) throw new Error("over 64 KiB");
+			raw = JSON.parse(readFileSync(path, "utf8"));
+		} catch (e) {
+			throw new KitConfigError(`serve config ${path} could not be read: ${(e as Error).message}`);
+		}
+		try {
+			parseServeConfig(raw);
+		} catch (e) {
+			if (e instanceof ServeConfigError) throw new KitConfigError(e.message);
+			throw e;
+		}
+		// The payer sanctions screen (a Tier 0 condition) has no route on this network: refuse to start.
+		throw new RouteMissingError(ROUTES.servePayerScreen);
 	}
 	if (cmd === "serve") {
 		// Reserved name. No flag is parsed: whatever follows, nothing is bound and nothing is sent.

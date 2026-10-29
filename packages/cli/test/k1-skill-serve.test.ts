@@ -70,7 +70,7 @@ test("events serve: binds 127.0.0.1 at the given port (the stream that used to b
 });
 
 test("serve is a reserved slot: exit 4, nothing bound, nothing sent, pointed at events serve", async () => {
-	for (const argv of [["serve"], ["serve", "--port", "9125"], ["serve", "start", "--anything"]]) {
+	for (const argv of [["serve"], ["serve", "--port", "9125"], ["serve", "status", "--anything"]]) {
 		let bound = 0;
 		let sent = 0;
 		const r = await json(argv, {
@@ -89,7 +89,7 @@ test("serve is a reserved slot: exit 4, nothing bound, nothing sent, pointed at 
 test("the paid-endpoint spec stub exists, says what is built today, and is listed in help", async () => {
 	const stub = readFileSync(join(ROOT, "docs", "serve-paid-endpoint.md"), "utf8");
 	assert.match(stub, /^# /m);
-	assert.match(stub, /Status: specified\. Not built\./);
+	assert.match(stub, /Status: specified\. Not open\./);
 	assert.match(stub, /events serve/);
 	const help: string[] = [];
 	await main(["help"], (l) => help.push(l), () => {});
