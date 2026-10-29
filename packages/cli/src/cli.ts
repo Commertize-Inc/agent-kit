@@ -68,6 +68,7 @@ export const COMMANDS = [
 	"events",
 	"job",
 	"serve",
+	"service",
 	"routes",
 	"mcp",
 	"skill",
@@ -150,6 +151,10 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent serve start [--config commertize.serve.json]
                                              checks the serve kill file and your config on this
                                              machine, then Not open (exit 4): nothing bound or sent
+  commertize-agent service publish [--config commertize.serve.json]
+                                             checks the kill file and your config on this machine,
+                                             then Not open (exit 4): nothing sent. unpublish and
+                                             show are Not open (exit 4)
   commertize-agent routes                    every route the kit calls, live or not open
   commertize-agent mcp <template> --server /abs/path/mcp-server/dist/index.js
                                              MCP client config for a template, and the server
@@ -729,6 +734,29 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 		}
 		// The payer sanctions screen (a Tier 0 condition) has no route on this network: refuse to start.
 		throw new RouteMissingError(ROUTES.servePayerScreen);
+	}
+	if (cmd === "service") {
+		const sub = rest[0];
+		if (sub === "unpublish" || sub === "show") throw new RouteMissingError(ROUTES.directoryServicePublish);
+		if (sub !== "publish") throw new UsageError("service needs publish, unpublish or show");
+		// A listing is a write: the kit kill file first, then the local config, then the route (Not open).
+		const { values } = parse(rest.slice(1), { config: { type: "string" } });
+		assertNotDisabled(home);
+		const path = (values.config as string | undefined) ?? "commertize.serve.json";
+		let raw: unknown;
+		try {
+			if (statSync(path).size > 65_536) throw new Error("over 64 KiB");
+			raw = JSON.parse(readFileSync(path, "utf8"));
+		} catch (e) {
+			throw new KitConfigError(`serve config ${path} could not be read: ${(e as Error).message}`);
+		}
+		try {
+			parseServeConfig(raw);
+		} catch (e) {
+			if (e instanceof ServeConfigError) throw new KitConfigError(e.message);
+			throw e;
+		}
+		throw new RouteMissingError(ROUTES.directoryServicePublish);
 	}
 	if (cmd === "serve") {
 		// Reserved name. No flag is parsed: whatever follows, nothing is bound and nothing is sent.
