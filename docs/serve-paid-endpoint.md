@@ -1,9 +1,20 @@
 # `commertize-agent serve`: your own handler as a paid endpoint
 
-Status: specified. Not built. In this release `commertize-agent serve` answers
+Status: specified. Not open. In this release `commertize-agent serve` answers
 exit 4 (`error.code: "not_open"`, `hand_back.reason: "serve_not_open"`), binds
 nothing and sends nothing. The loopback event stream that used to be called
 `serve` is `commertize-agent events serve`.
+
+`commertize-agent serve start` checks the serve kill file
+(`~/.commertize/serve/DISABLED`) and your `commertize.serve.json` on this
+machine, then answers exit 4: the payer sanctions screen has no route on this
+network, so nothing is bound and nothing is sent.
+
+The payment checks are in the kit library (`OperatorSeller`): the exact price
+in USDC base units, your payee only, the signature, the validity window and the
+nonce are checked before any facilitator call, and Tier 0 limits per payer
+address are kept on your machine (in USDC: at most one per call, twenty-five
+per 24 hours and two hundred fifty per 30 days).
 
 ## What the command is for
 
