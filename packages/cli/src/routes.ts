@@ -90,7 +90,7 @@ export const ROUTES = {
 		auth: "session",
 		status: "missing",
 		pending: "Not open",
-		note: "A pending mandate request (or cap increase request) from your agent, attested by its device signer; you approve and sign in the dashboard.",
+		note: "A mandate request (or cap increase request) from your agent, attested by its device signer and waiting for you; you approve and sign it in the dashboard.",
 	},
 	pairingStatus: {
 		id: "pairingStatus",

@@ -1006,7 +1006,7 @@ async function dispatch(cmd: string | undefined, rest: string[], out: Out, err: 
 					throw new UsageError("mandate request-change takes --mandate <mandateId> and --caps <file> with fromCaps and toCaps");
 				const c = (caps ?? {}) as Record<string, unknown>;
 				message = { mandateId: values.mandate, fromCaps: c.fromCaps, toCaps: c.toCaps, nonce };
-				if (typeof caps !== "object" || caps === null || Object.keys(caps).length !== 2) throw new UsageError("--caps file for request-change has exactly fromCaps and toCaps");
+				if (typeof caps !== "object" || caps === null || Object.keys(caps).length !== 2) throw new UsageError("--caps file for request-change must have exactly fromCaps and toCaps");
 			}
 			const primaryType = sub === "request" ? "MandateSignatureRequest" : "CapIncreaseRequest";
 			try {
