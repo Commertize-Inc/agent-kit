@@ -517,3 +517,32 @@ test("handler fails and the release write throws: still a 502 HANDLER_FAILED ans
 	assert.equal(r.status, 502);
 	assert.equal(JSON.parse(r.body).error.code, "HANDLER_FAILED");
 });
+
+// Round-1 review vector: from = to = test key #1 address, value 50000, validAfter 0, validBefore 1893456000, nonce 0xab x 32.
+const REVIEW_DIGEST = "0x6fbb60d0bb3002801088b6042f388e3f" + "d1b82e1de894440fcb687d025b024632";
+
+test("digest: equals the round-1 review vector (viem 2.21.0)", () => {
+	const a: Authorization = { from: VIEM_AUTH.from, to: VIEM_AUTH.from, value: "50000", validAfter: "0", validBefore: "1893456000", nonce: "0x" + "ab".repeat(32) };
+	assert.equal("0x" + Buffer.from(transferAuthorizationDigest(CFG.usdc, a)).toString("hex"), REVIEW_DIGEST);
+});
+
+test("caps: a release whose write fails leaves the entry counted in memory", () => {
+	let n = 0;
+	const caps = new CapLedger({ persist: () => { if (++n > 1) throw new Error("disk"); } });
+	const r = caps.reserve(PAYER, 7n, NOW_MS);
+	assert.equal(r.ok, true);
+	if (r.ok) r.release();
+	assert.equal(caps.spent(PAYER, 0), 7n);
+});
+
+test("nonces: a nonce whose write fails is not recorded in memory, and the call is refused with 503", async () => {
+	const store = new NonceStore({ persist: () => { throw new Error("disk"); } });
+	assert.throws(() => store.add("k1"));
+	assert.equal(store.has("k1"), false);
+	const fac = spyFacilitator();
+	const s = new OperatorSeller({ config: CFG, payTo: PAY_TO, facilitator: fac.f, screen: async () => "clear", assertEnabled: () => {}, handler: async () => ({}), now: () => NOW_MS, nonces: store });
+	const r = await call(s, payment());
+	assert.equal(r.status, 503);
+	assert.equal(JSON.parse(r.body).error.code, "NONCE_STORE_UNAVAILABLE");
+	assert.deepEqual(fac.calls, []);
+});
