@@ -190,7 +190,7 @@ export interface Result {
 	exit_code: number;
 	data?: unknown;
 	error?: {
-		code: "usage" | "config" | "route_missing" | "not_open" | "api" | "internal" | "timeout" | "denied" | "expired" | "busy" | "source_changed" | "not_found" | "drift";
+		code: "usage" | "config" | "route_missing" | "not_open" | "api" | "internal" | "timeout" | "denied" | "expired" | "busy" | "source_changed" | "not_found" | "drift" | "TYPED_DATA_NOT_ALLOWLISTED";
 		message: string;
 		status?: number;
 	};
@@ -268,7 +268,7 @@ export function takeJsonFlag(argv: string[]): { json: boolean; rest: string[] } 
 	return { json, rest };
 }
 
-function errorResult(command: string, e: unknown): Result {
+export function errorResult(command: string, e: unknown): Result {
 	if (e instanceof UsageError || e instanceof DrainUsageError || e instanceof AgentTextError)
 		return {
 			command,
@@ -287,7 +287,17 @@ function errorResult(command: string, e: unknown): Result {
 			hand_back: handBack("route_not_open"),
 			textErr: [`commertize-agent: ${e.message}`],
 		};
-	if (e instanceof SignerNotOpenError || e instanceof NotAllowlistedError)
+	// A refused payload is its own refusal (never labelled as a missing route). Exit 4, as every typed-data refusal (spec §8 table).
+	if (e instanceof NotAllowlistedError)
+		return {
+			command,
+			exit_code: EXIT.not_open,
+			error: { code: e.code, message: e.message },
+			next_step: null,
+			hand_back: handBack("typed_data_not_allowlisted"),
+			textErr: [`commertize-agent: not signed: ${e.message}`],
+		};
+	if (e instanceof SignerNotOpenError)
 		return {
 			command,
 			exit_code: EXIT.not_open,

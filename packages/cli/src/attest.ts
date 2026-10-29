@@ -23,6 +23,7 @@
  */
 
 import { createHash, createPrivateKey, sign as ecSign } from "node:crypto";
+import { types as utilTypes } from "node:util";
 import { canonicalize } from "./canonical.ts";
 import { KitConfigError } from "./client.ts";
 import type { Keychain } from "./keychain.ts";
@@ -130,9 +131,27 @@ export interface Attestation {
 	fingerprint: string;
 }
 
+/**
+ * A detached, data-only copy of the payload. Refuses a Proxy, an accessor (getter/setter) at any
+ * depth, a symbol key, an array and any non-plain object, then copies through JSON. The check and
+ * the signature both use ONLY this copy, so what is checked is exactly what is signed.
+ */
+export function snapshotPayload(v: unknown, depth = 0): unknown {
+	if (depth > 4) throw new NotAllowlistedError("payload is nested too deeply");
+	if (v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+	if (typeof v !== "object" || utilTypes.isProxy(v) || !isPlain(v)) throw new NotAllowlistedError("payload holds something other than plain data");
+	if (Object.getOwnPropertySymbols(v).length > 0) throw new NotAllowlistedError("payload has a symbol key");
+	const out: Record<string, unknown> = {};
+	for (const [k, d] of Object.entries(Object.getOwnPropertyDescriptors(v))) {
+		if (!("value" in d) || d.get !== undefined || d.set !== undefined) throw new NotAllowlistedError(`payload field ${JSON.stringify(k).slice(0, 40)} is an accessor`);
+		out[k] = snapshotPayload(d.value, depth + 1);
+	}
+	return JSON.parse(JSON.stringify(out));
+}
+
 export function signerAttest(kc: Keychain | undefined, home: string, payload: unknown, now: Date = new Date()): Attestation {
 	assertNotDisabled(home);
-	const p = checkAttestPayload(payload, now);
+	const p = checkAttestPayload(snapshotPayload(payload), now);
 	const k = needKeychain(kc);
 	const v = k.get(SIGNER_KEY);
 	if (!v) throw new KitConfigError("no signer key stored: run signer init first");

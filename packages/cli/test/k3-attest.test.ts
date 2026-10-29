@@ -14,7 +14,7 @@ import { ATTEST_DOMAIN, ATTEST_TYPES, attestDigest, checkAttestPayload, NotAllow
 import { DisabledError, enableSigning, killFilePath } from "../src/receiptsigner.ts";
 import { SIGNER_KEY, signerInit } from "../src/signer.ts";
 import { canonicalize } from "../src/canonical.ts";
-import { main } from "../src/cli.ts";
+import { errorResult, main } from "../src/cli.ts";
 
 const ENV = { baseUrl: "https://api.commertize.com", sessionToken: "SESSION-SECRET" };
 const P1 = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -239,4 +239,74 @@ test("mandate request --caps: the kill file stops it (exit 19) before the caps f
 	// The hand-back form (no --caps) sends nothing and stays open.
 	const hb = await run(["mandate", "request"], { home: h });
 	assert.equal(hb.code, 5);
+});
+
+// --- review LOW-1: check-then-sign through accessors / Proxy -----------------------------
+
+test("a getter that answers the allow-list once and something else at signing is refused; nothing signed", () => {
+	const k = withKey();
+	const home = enabledHome();
+	let n = 0;
+	const p = mandateReq() as Record<string, unknown>;
+	Object.defineProperty(p, "primaryType", { enumerable: true, get: () => (n++ === 0 ? "MandateSignatureRequest" : "TransferRequest") });
+	const before = k.reads();
+	assert.throws(() => signerAttest(k.kc, home, p, NOW), NotAllowlistedError);
+	assert.equal(k.reads(), before, "key not read");
+});
+
+test("a getter nested in caps is refused; a Proxy, a symbol key and a class instance are refused", () => {
+	const k = withKey();
+	const home = enabledHome();
+	const nested = mandateReq();
+	const caps = { ...CAPS } as Record<string, unknown>;
+	let n = 0;
+	Object.defineProperty(caps, "totalUsdCents", { enumerable: true, get: () => (n++ === 0 ? "10000" : "999999999999") });
+	(nested.message as Record<string, unknown>).caps = caps;
+	const sym = mandateReq() as Record<PropertyKey, unknown>;
+	sym[Symbol("x")] = 1;
+	class C { domain = { ...ATTEST_DOMAIN }; primaryType = "MandateSignatureRequest"; message = mandateReq().message; }
+	const before = k.reads();
+	for (const [name, p] of [["nested getter", nested], ["proxy", new Proxy(mandateReq(), {})], ["proxy message", { ...mandateReq(), message: new Proxy(mandateReq().message, {}) }], ["symbol key", sym], ["class instance", new C()]] as [string, unknown][])
+		assert.throws(() => signerAttest(k.kc, home, p, NOW), NotAllowlistedError, name);
+	assert.equal(k.reads(), before);
+});
+
+test("the signature covers the snapshot: mutating the caller's object afterwards changes nothing that was signed", () => {
+	const k = withKey();
+	const p = mandateReq();
+	const a = signerAttest(k.kc, enabledHome(), p, NOW);
+	const signed = mandateReq();
+	(p.message as Record<string, unknown>).level = "L2";
+	assert.ok(verify("sha256", Buffer.from(canonicalize(signed)), { key: k.pub, dsaEncoding: "ieee-p1363" }, Buffer.from(a.signature, "base64url")));
+});
+
+test("an allow-list refusal surfaces as TYPED_DATA_NOT_ALLOWLISTED, never as a missing route", () => {
+	const r = errorResult("signer", new NotAllowlistedError("x"));
+	assert.equal(r.error?.code, "TYPED_DATA_NOT_ALLOWLISTED");
+	assert.equal(r.hand_back?.reason, "typed_data_not_allowlisted");
+	assert.notEqual(r.hand_back?.reason, "route_not_open");
+	assert.equal(r.exit_code, 4);
+});
+
+test("mandate request / request-change --caps never build a client and never fetch", async () => {
+	const home = enabledHome();
+	let built = 0;
+	const fetched: unknown[] = [];
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = (async (u: unknown) => (fetched.push(u), new Response("{}"))) as typeof fetch;
+	try {
+		for (const argv of [
+			["mandate", "request", "--caps", capsFile(CAPS), "--level", "L1", "--expires", "2099-01-01T00:00:00Z", "--agent", P1],
+			["mandate", "request-change", "--caps", capsFile({ fromCaps: CAPS, toCaps: { ...CAPS, totalUsdCents: "20000" } }), "--mandate", M1],
+			["mandate", "request", "--caps", capsFile({ bad: 1 }), "--level", "L1", "--expires", "2099-01-01T00:00:00Z", "--agent", P1],
+		]) {
+			const out: string[] = [];
+			const code = await main([...argv, "--json"], (l) => out.push(l), () => {}, { client: () => (built++, new CommertizeClient(ENV, globalThis.fetch)), home, signals: false });
+			assert.ok(code === 4 || code === 2, argv.join(" "));
+		}
+	} finally {
+		globalThis.fetch = realFetch;
+	}
+	assert.equal(built, 0, "no client built");
+	assert.equal(fetched.length, 0, "no fetch");
 });
