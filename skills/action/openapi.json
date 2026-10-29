@@ -1,0 +1,72 @@
+{
+	"openapi": "3.1.0",
+	"info": {
+		"title": "Commertize Agent Kit",
+		"version": "0.1.0",
+		"description": "Install the Commertize Agent Kit and create a KYA passport for this agent."
+	},
+	"servers": [
+		{
+			"url": "https://api.commertize.com"
+		}
+	],
+	"components": {
+		"securitySchemes": {
+			"session": {
+				"type": "http",
+				"scheme": "bearer"
+			}
+		}
+	},
+	"security": [
+		{
+			"session": []
+		}
+	],
+	"paths": {
+		"/mandates/principal/passports": {
+			"post": {
+				"operationId": "passportCreate",
+				"summary": "Registers your agent's wallet address under your signed-in account. Body: { agentAddress }.",
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"required": [
+									"agentAddress"
+								],
+								"properties": {
+									"agentAddress": {
+										"type": "string",
+										"pattern": "^0x[0-9a-fA-F]{40}$"
+									}
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Passport created"
+					},
+					"409": {
+						"description": "Address already registered"
+					}
+				}
+			}
+		},
+		"/mandates/principal/agents": {
+			"get": {
+				"operationId": "principalAgents",
+				"summary": "Lists the agents registered under your own account and their status.",
+				"responses": {
+					"200": {
+						"description": "Agents under your account"
+					}
+				}
+			}
+		}
+	}
+}

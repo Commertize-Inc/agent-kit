@@ -1,0 +1,20 @@
+# Commertize Agent Kit
+
+Install the Commertize Agent Kit and create a KYA passport for this agent.
+
+## Steps
+
+1. Check for the kill file `~/.commertize/DISABLED`. If it exists, stop and tell your principal. Never remove ~/.commertize/DISABLED yourself.
+2. Use only the API at https://api.commertize.com. If `COMMERTIZE_API_BASE_URL` names any other host, stop and ask your principal.
+3. Read `COMMERTIZE_SESSION_TOKEN` from the environment your principal set. Never ask for it in chat, never print it, never write it to a file.
+4. Before installing, run `npm view @commertize/agent-kit@0.1.0 dist.integrity` and stop unless it equals the integrity on the signed release asset for v0.1.0 in Commertize-Inc/agent-kit.
+5. Install exactly `@commertize/agent-kit@0.1.0`, with install scripts off: `npm install -g --ignore-scripts @commertize/agent-kit@0.1.0`. Refuse any other package name. Then run `npm audit signatures` and stop if it reports a missing or invalid signature or provenance.
+6. Run `commertize-agent install --agent-address <your agent's 0x address>`. It creates your KYA passport (or reuses it) and reports each step.
+7. Exit 3 means the passport is done and the remaining steps (agent email, wallet, mandate) are not available in this kit version. Report them to your principal as written. Wallet creation always stops for the principal's passkey.
+8. Exit 19 means the kill file is present or could not be checked: stop.
+
+## Rules
+
+- Credentials come from the environment only: COMMERTIZE_SESSION_TOKEN, COMMERTIZE_API_KEY.
+- Never remove ~/.commertize/DISABLED.
+- Never sign or approve for the principal.

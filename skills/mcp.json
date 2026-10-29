@@ -1,0 +1,50 @@
+{
+	"name": "com.commertize/agent-kit",
+	"description": "Install the Commertize Agent Kit and create a KYA passport for this agent.",
+	"version": "0.1.0",
+	"packages": [
+		{
+			"registryType": "npm",
+			"identifier": "@commertize/agent-kit",
+			"version": "0.1.0",
+			"environmentVariables": [
+				{
+					"name": "COMMERTIZE_SESSION_TOKEN",
+					"isSecret": true,
+					"isRequired": true
+				},
+				{
+					"name": "COMMERTIZE_API_KEY",
+					"isSecret": true,
+					"isRequired": false
+				}
+			]
+		}
+	],
+	"tools": [
+		{
+			"name": "commertize.install",
+			"cli": "commertize-agent install",
+			"route": "/mandates/principal/passports",
+			"available": true
+		},
+		{
+			"name": "commertize.passport.create",
+			"cli": "commertize-agent register",
+			"route": "/mandates/principal/passports",
+			"available": true
+		},
+		{
+			"name": "commertize.email.create",
+			"cli": null,
+			"route": null,
+			"available": false
+		},
+		{
+			"name": "commertize.wallet.create",
+			"cli": null,
+			"route": null,
+			"available": false
+		}
+	]
+}

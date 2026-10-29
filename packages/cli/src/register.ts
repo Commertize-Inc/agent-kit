@@ -19,7 +19,30 @@ export interface RegisterOutcome {
 	taskNote: string;
 }
 
-const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+export const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * Registers `agentAddress` under your own account. A 409 means the server
+ * already holds this address: the active row is found and reused, never
+ * registered twice. Shared by `register` and `install`.
+ */
+export async function ensurePassport(client: CommertizeClient, agentAddress: string): Promise<RegisterOutcome["passport"]> {
+	try {
+		const p = await client.call<{ passportId: string; agentAddress: string }>("passportCreate", { body: { agentAddress } });
+		return { passportId: p.passportId, agentAddress: p.agentAddress, reused: false };
+	} catch (e) {
+		if (!(e instanceof ApiError) || e.status !== 409) throw e;
+		const own = await client.call<{ agents?: { passportId: string; agentAddress: string; kyaStatus: string }[] }>(
+			"principalAgents",
+			{ query: { limit: "50" } }
+		);
+		const hit = (own.agents ?? []).find(
+			(a) => a.agentAddress.toLowerCase() === agentAddress.toLowerCase() && a.kyaStatus === "active"
+		);
+		if (!hit) throw new Error("the server refused this address (409) and no active registration for it was found");
+		return { passportId: hit.passportId, agentAddress: hit.agentAddress, reused: true };
+	}
+}
 
 /**
  * Registers your agent's wallet under your own account, reports why the task
@@ -38,22 +61,7 @@ export async function register(
 	if (!client.env.sessionToken) throw new KitConfigError("register needs COMMERTIZE_SESSION_TOKEN (your own session)");
 
 	// 1. Wallet. A 409 means the server already holds this address: find the active row and reuse it.
-	let passport: RegisterOutcome["passport"];
-	try {
-		const p = await client.call<{ passportId: string; agentAddress: string }>("passportCreate", { body: { agentAddress } });
-		passport = { passportId: p.passportId, agentAddress: p.agentAddress, reused: false };
-	} catch (e) {
-		if (!(e instanceof ApiError) || e.status !== 409) throw e;
-		const own = await client.call<{ agents?: { passportId: string; agentAddress: string; kyaStatus: string }[] }>(
-			"principalAgents",
-			{ query: { limit: "50" } }
-		);
-		const hit = (own.agents ?? []).find(
-			(a) => a.agentAddress.toLowerCase() === agentAddress.toLowerCase() && a.kyaStatus === "active"
-		);
-		if (!hit) throw new Error("the server refused this address (409) and no active registration for it was found");
-		passport = { passportId: hit.passportId, agentAddress: hit.agentAddress, reused: true };
-	}
+	const passport = await ensurePassport(client, agentAddress);
 
 	// 2. Mandate. The task-mandate route is not yet available. Never fall back to the investment mandate route.
 	const mandate = { set: false as const, reason: new RouteMissingError(ROUTES.taskMandateCreate).message };

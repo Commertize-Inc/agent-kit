@@ -6,6 +6,8 @@ import { parseArgs } from "node:util";
 import { CommertizeClient, readEnv } from "./client.ts";
 import { init, TEMPLATES } from "./init.ts";
 import { register } from "./register.ts";
+import { homedir } from "node:os";
+import { install, installPrompt, sha256, writeSkillFiles } from "./install.ts";
 import { ROUTES, ROUTES_CHECKED_AT } from "./routes.ts";
 
 export const KIT_VERSION = "0.1.0";
@@ -16,7 +18,13 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent register --agent-address 0x... [--task-class c]... [--allow-host h]
                                              register your agent's wallet on Commertize and
                                              find the first open Work task
-  commertize-agent routes                    every route the kit calls, live or not yet available
+  commertize-agent install --agent-address 0x... [--allow-host h]
+                                             create this agent's KYA passport; reports the agent
+                                             email, wallet and mandate steps (exit 3, 19 if
+                                             ~/.commertize/DISABLED is present)
+  commertize-agent install --print-prompt    print the one install prompt and its sha256
+  commertize-agent skills write <dir>        write the skill files and MCP manifest into an empty dir
+  commertize-agent routes                   every route the kit calls, live or not yet available
 
 Environment (read, never stored): COMMERTIZE_API_BASE_URL, COMMERTIZE_SESSION_TOKEN, COMMERTIZE_API_KEY
 `;
@@ -48,6 +56,31 @@ export async function main(argv: string[], out = console.log, err = console.erro
 				].join("\n")
 			);
 			return 3; // registered, but the mandate step is not available yet
+		}
+		if (cmd === "install") {
+			const { values } = parseArgs({
+				args: rest,
+				options: { "agent-address": { type: "string" }, "allow-host": { type: "string" }, "print-prompt": { type: "boolean" } },
+			});
+			if (values["print-prompt"]) {
+				const p = installPrompt(KIT_VERSION);
+				out(p.replace(/\n$/, "")); // console adds the one trailing newline, so stdout is the exact hashed bytes
+				out(`sha256 ${sha256(p)}`);
+				out("Verify with `shasum -a 256` against the install-prompt.sha256 on the signed release asset and the hash at commertize.com.");
+				return 0;
+			}
+			const addr = values["agent-address"];
+			if (!addr) return err(USAGE), 2;
+			const r = await install({ home: homedir(), env: process.env, agentAddress: addr, allowHost: values["allow-host"], warn: err, kitVersion: KIT_VERSION });
+			for (const s of r.steps) out(`${s.state.padEnd(13)} ${s.id.padEnd(8)} ${s.message}`);
+			return r.exit;
+		}
+		if (cmd === "skills") {
+			const { positionals } = parseArgs({ args: rest, allowPositionals: true, options: {} });
+			const [sub, dir] = positionals;
+			if (sub !== "write" || !dir) return err(USAGE), 2;
+			out(`Wrote ${dir}: ${writeSkillFiles(dir, KIT_VERSION).join(", ")}`);
+			return 0;
 		}
 		if (cmd === "routes") {
 			out(`Route status as of ${ROUTES_CHECKED_AT.date}`);
