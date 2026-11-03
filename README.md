@@ -1,6 +1,8 @@
 # Commertize Agent Kit
 
-Templates and a small CLI for running **your own** software agent against [Commertize](https://commertize.com), a digital capital markets platform for real-world assets. You run it on your own machine, with your own framework, model and keys.
+Commertize is infrastructure for tokenizing real-world assets and for agentic commerce. This kit gives agents a command line and a Node library for Commertize's public reads and for a local passport key.
+
+It also carries templates for running **your own** software agent against [Commertize](https://commertize.com). You run it on your own machine, with your own framework, model and keys.
 
 What this is not: a hosted builder. Commertize runs nothing for you: no runtime, no schedule, no custody of any key. The kit contains nothing from Commertize's compliance engine and reaches no investor or holder data. Commertize does not list, operate or vouch for any agent built with it.
 
@@ -86,3 +88,5 @@ Requires Node 22.6 or later.
 ## Notices
 
 Nothing here is an offer or solicitation of any security, or legal, tax or investment advice. Provided as-is under the licences above. "Commertize" is a trademark of Commertize, Inc.; the licences grant no trademark rights. See `NOTICE`, `SECURITY.md`.
+
+Informational only. Not an offer to sell or a solicitation to buy any security. Features marked testnet are not live.
