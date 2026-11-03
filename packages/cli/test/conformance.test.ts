@@ -63,7 +63,7 @@ for (const t of TEMPLATES) {
 		// Nothing a template does is a commitment.
 		for (const r of res.receipts) assert.equal(r.commitment.is_commitment, false);
 		// Every network call is to a live route the template declares.
-		const live: string[] = t.routes.filter((id) => ROUTES[id].status === "live").map((id) => ROUTES[id].path);
+		const live: string[] = t.routes.filter((id) => ROUTES[id].status === "available").map((id) => ROUTES[id].path);
 		for (const c of calls) assert.ok(live.includes(new URL(c.url).pathname), `undeclared call ${c.url}`);
 	});
 
@@ -89,7 +89,7 @@ for (const t of TEMPLATES) {
 		await assert.rejects(() => t.run(ctx), /No model wired/);
 	});
 
-	test(`${t.name}: a live route answering an error fails the run (no silent empty state)`, async () => {
+	test(`${t.name}: an available route answering an error fails the run (no silent empty state)`, async () => {
 		const { f } = fakeFetch({});
 		await assert.rejects(() => t.run(ctxFor(f)), /answered 404/);
 	});

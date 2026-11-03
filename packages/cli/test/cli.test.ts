@@ -180,3 +180,11 @@ test("cli: routes lists every route; unknown command exits 2", async () => {
 	assert.equal(lines.length, Object.keys(ROUTES).length + 1);
 	assert.equal(await main(["deploy"], () => {}, () => {}), 2);
 });
+
+test("cli: routes output says available, never live (AXIOM R2 2026-11-03, public copy)", async () => {
+	const lines: string[] = [];
+	assert.equal(await main(["routes"], (l) => lines.push(l), () => {}), 0);
+	for (const l of lines.slice(1)) assert.match(l, /^(available|missing) /, l);
+	assert.ok(lines.some((l) => l.startsWith("available ")), "at least one available route");
+	for (const l of lines) assert.doesNotMatch(l, /\blive\b/i, l);
+});

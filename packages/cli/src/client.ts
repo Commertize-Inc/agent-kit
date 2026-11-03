@@ -102,7 +102,7 @@ export class CommertizeClient {
 	/** Calls a route from the table. A missing route throws before any network call. */
 	async call<T = unknown>(id: RouteId, opts: CallOptions = {}): Promise<T> {
 		const route: Route = ROUTES[id];
-		if (route.status !== "live") throw new RouteMissingError(route);
+		if (route.status !== "available") throw new RouteMissingError(route);
 		const headers: Record<string, string> = {
 			accept: "application/json",
 			"user-agent": "commertize-agent-kit/0.1.0",

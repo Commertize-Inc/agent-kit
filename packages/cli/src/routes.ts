@@ -4,8 +4,8 @@
 /**
  * Every Commertize route this kit calls, in one table.
  *
- * A row is `live` when the route is available on the public Commertize API
- * as of ROUTES_CHECKED_AT.date. Some live routes can be switched off on a
+ * A row is `available` when the route is available on the public Commertize API
+ * as of ROUTES_CHECKED_AT.date. Some available routes can be switched off on a
  * deployment and then answer 404 (`switchable`). A row is `missing` when it
  * is not yet available; calling it throws RouteMissingError before any
  * network call. The kit never substitutes sample data for a missing route.
@@ -18,8 +18,8 @@ export interface Route {
 	method: "GET" | "POST";
 	path: string;
 	auth: Auth;
-	status: "live" | "missing";
-	/** A live route that a deployment can switch off (it then answers 404). */
+	status: "available" | "missing";
+	/** An available route that a deployment can switch off (it then answers 404). */
 	switchable?: true;
 	/** For routes that cannot be called yet: the public status. */
 	pending?: string;
@@ -34,7 +34,7 @@ export const ROUTES = {
 		method: "POST",
 		path: "/mandates/principal/passports",
 		auth: "session",
-		status: "live",
+		status: "available",
 		switchable: true,
 		note: "Registers your agent's wallet address under your signed-in account. Body: { agentAddress }.",
 	},
@@ -43,7 +43,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/mandates/principal/agents",
 		auth: "session",
-		status: "live",
+		status: "available",
 		switchable: true,
 		note: "Lists the agents registered under your own account and their status.",
 	},
@@ -79,7 +79,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/work/v1/tasks",
 		auth: "none",
-		status: "live",
+		status: "available",
 		note: "The public Commertize Work board. May be empty.",
 	},
 	workSubmit: {
@@ -96,7 +96,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/listings",
 		auth: "none",
-		status: "live",
+		status: "available",
 		note: "The public marketplace feed. No key needed.",
 	},
 	partnerListings: {
@@ -104,7 +104,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/partner/listings",
 		auth: "api_key",
-		status: "live",
+		status: "available",
 		note: "Listings for holders of an issued API key. Rate limited per key.",
 	},
 	news: {
@@ -112,7 +112,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/news",
 		auth: "none",
-		status: "live",
+		status: "available",
 		note: "Published Commertize articles.",
 	},
 	dataApiUsage: {
@@ -138,7 +138,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/desk/counts",
 		auth: "session",
-		status: "live",
+		status: "available",
 		note: "Counts for your own Desk. Empty when mandates are switched off.",
 	},
 	agentActivity: {
@@ -146,7 +146,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/agents/activity",
 		auth: "session",
-		status: "live",
+		status: "available",
 		note: "Activity of your own agents.",
 	},
 	deskBrief: {
@@ -154,7 +154,7 @@ export const ROUTES = {
 		method: "GET",
 		path: "/desk/brief",
 		auth: "session",
-		status: "live",
+		status: "available",
 		note: "The Desk brief and latest articles for a signed-in user.",
 	},
 } as const satisfies Record<string, Route>;

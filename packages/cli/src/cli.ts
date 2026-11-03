@@ -16,7 +16,7 @@ const USAGE = `commertize-agent ${KIT_VERSION}
   commertize-agent register --agent-address 0x... [--task-class c]... [--allow-host h]
                                              register your agent's wallet on Commertize and
                                              find the first open Work task
-  commertize-agent routes                    every route the kit calls, live or not yet available
+  commertize-agent routes                    every route the kit calls, available or not yet available
 
 Environment (read, never stored): COMMERTIZE_API_BASE_URL, COMMERTIZE_SESSION_TOKEN, COMMERTIZE_API_KEY
 `;
@@ -53,7 +53,7 @@ export async function main(argv: string[], out = console.log, err = console.erro
 			out(`Route status as of ${ROUTES_CHECKED_AT.date}`);
 			for (const r of Object.values(ROUTES))
 				out(
-					`${r.status.padEnd(7)} ${r.method.padEnd(4)} ${r.path}${"switchable" in r ? "  [answers 404 while switched off]" : ""}${
+					`${r.status.padEnd(9)} ${r.method.padEnd(4)} ${r.path}${"switchable" in r ? "  [answers 404 while switched off]" : ""}${
 						"pending" in r ? `  (${r.pending})` : ""
 					}`
 				);
