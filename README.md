@@ -8,7 +8,7 @@ What this is not: a hosted builder. Commertize runs nothing for you: no runtime,
 
 | Path | What it is | Licence |
 |---|---|---|
-| `packages/cli` | `@commertize/agent-kit` CLI (command `commertize-agent`) and library: route table, API client, CAS v0.1 receipts | Apache-2.0 |
+| `packages/cli` | `@commertize/agent-kit` CLI (command `commertize-agent`) and library: route table, API client, `CAS v0.1 receipt` records (a data format; no receipts are issued on mainnet today) | Apache-2.0 |
 | `templates/sponsor-scout` | Finds candidate sponsors from your sources; drafts an introduction for a person to review | Apache-2.0 |
 | `templates/register-cleaner` | Data upkeep: checks the source a Work task names and prepares a change report | Apache-2.0 |
 | `templates/data-consumer` | Reads free Commertize data and summarises it with citations | Apache-2.0 |
@@ -26,7 +26,7 @@ cd my-agent
 npm install && npm start
 ```
 
-Each template is a short loop with one seam, `model.ts`, marked **YOUR MODEL CALL GOES HERE**. Until you wire it, the template refuses to run. Every action it takes is recorded as a CAS v0.1 receipt (Commertize Agent Standard, draft), hash-linked and signed with your agent key. The kit keeps receipts in memory and prints them; where you store them is up to you.
+Each template is a short loop with one seam, `model.ts`, marked **YOUR MODEL CALL GOES HERE**. Until you wire it, the template refuses to run. Every action it takes is written as a receipt record (format): a `CAS v0.1 receipt` (Commertize Agent Standard, draft), hash-linked and signed with your agent key. The kit keeps these records in memory and prints them; where you store them is up to you.
 
 ## Register your agent
 
@@ -45,30 +45,32 @@ Read at run time, never written to disk, never logged, sent only to the API base
 | `COMMERTIZE_API_BASE_URL` | API base, default `https://api.commertize.com`. Only that host or localhost; any other host is refused unless you also pass `--allow-host <host>` (announced on stderr). Must be https (http only for localhost). |
 | `COMMERTIZE_SESSION_TOKEN` | Your own signed-in session, for routes about your own account. Short-lived; copy a fresh one when it expires. |
 | `COMMERTIZE_API_KEY` | Your own issued API key, for keyed routes. |
-| `COMMERTIZE_MANDATE_ID`, `COMMERTIZE_AGENT_ID`, `COMMERTIZE_AGENT_KEY_ID` | Your own CAS identifiers for receipts. |
-| `COMMERTIZE_AGENT_SEED` | Your agent's ed25519 seed (32 bytes, base64url) for signing receipts. Or pass your own `Signer` (hardware key, cloud key service) to `ReceiptLog`. |
+| `COMMERTIZE_MANDATE_ID`, `COMMERTIZE_AGENT_ID`, `COMMERTIZE_AGENT_KEY_ID` | Your own CAS identifiers for `CAS v0.1 receipt` records. |
+| `COMMERTIZE_AGENT_SEED` | Your agent's ed25519 seed (32 bytes, base64url) for signing `CAS v0.1 receipt` records. Or pass your own `Signer` (hardware key, cloud key service) to `ReceiptLog`. |
 
-## Built and live: every route the kit calls
+## Routes the kit calls
 
-Status as of 2026-10-26. "Live" means the route is available on the public Commertize API. Some live routes can be switched off on a deployment and then answer 404; the kit says so when that happens. A route that is not yet available is never imitated: the step stops, records a blocked receipt saying so, and the command exits with code 3. `commertize-agent routes` prints this table from the code.
+Status as of 2026-10-26. Some available routes can be switched off on a deployment and then answer 404; the kit says so when that happens. A route that is not yet available is never imitated: the step stops, writes a blocked `CAS v0.1 receipt` record saying so, and the command exits with code 3. `commertize-agent routes` prints this table from the code.
 
 | Route | Used by | State |
 |---|---|---|
-| `POST /mandates/principal/passports` | `register` | live; may be switched off (404) |
-| `GET /mandates/principal/agents` | `register` (re-run) | live; may be switched off (404) |
+| `POST /mandates/principal/passports` | `register` | available; may be switched off (404) |
+| `GET /mandates/principal/agents` | `register` (re-run) | available; may be switched off (404) |
 | `POST /agents/v1/pairings` | `register` (headless pairing) | not yet available on the public API |
 | `POST /agents/v1/task-mandates` | `register` | not yet available on the public API |
 | `GET /agents/v1/me` | `register` | not yet available on the public API |
-| `GET /work/v1/tasks` | `register`, register-cleaner, desk-watcher | live; may be empty |
+| `GET /work/v1/tasks` | `register`, register-cleaner, desk-watcher | available; may be empty |
 | `POST /work/v1/tasks/:taskId/submissions` | register-cleaner | available, answers 501: claims are not open yet |
-| `GET /listings` | sponsor-scout, data-consumer, desk-watcher | live |
-| `GET /partner/listings` | library only | live; needs an issued API key |
-| `GET /news` | data-consumer | live |
+| `GET /listings` | sponsor-scout, data-consumer, desk-watcher | available |
+| `GET /partner/listings` | library only | available; needs an issued API key |
+| `GET /news` | data-consumer | available |
 | `GET /api-keys/:id/usage` | data-consumer | not yet available on the public API |
 | `POST /agents/submissions` | sponsor-scout | not yet available on the public API |
-| `GET /desk/counts` | desk-watcher | live; empty unless mandates are switched on |
-| `GET /agents/activity` | desk-watcher | live; empty unless mandates are switched on |
-| `GET /desk/brief` | desk-watcher | live |
+| `GET /desk/counts` | desk-watcher | available; empty unless mandates are switched on |
+| `GET /agents/activity` | desk-watcher | available; empty unless mandates are switched on |
+| `GET /desk/brief` | desk-watcher | available |
+
+Available = the route responds. It is not a statement that any payment, escrow or on-chain feature is live.
 
 ## What a task mandate allows
 
@@ -87,6 +89,6 @@ Requires Node 22.6 or later.
 
 ## Notices
 
-Nothing here is an offer or solicitation of any security, or legal, tax or investment advice. Provided as-is under the licences above. "Commertize" is a trademark of Commertize, Inc.; the licences grant no trademark rights. See `NOTICE`, `SECURITY.md`.
+Nothing here is an offer or solicitation of any security, or legal, tax or investment advice. Features marked testnet are not live. Provided as-is under the licences above. "Commertize" is a trademark of Commertize, Inc.; the licences grant no trademark rights. See `NOTICE`, `SECURITY.md`.
 
-Informational only. Not an offer to sell or a solicitation to buy any security. Features marked testnet are not live.
+
