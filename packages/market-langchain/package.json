@@ -1,0 +1,32 @@
+{
+	"name": "@commertize/market-langchain",
+	"version": "0.1.0",
+	"private": true,
+	"description": "DRAFT. Read-only tool definitions over @commertize/market for agent frameworks.",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Commertize-Inc/agent-kit.git",
+		"directory": "packages/market-langchain"
+	},
+	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist", "LICENSE"],
+	"engines": {
+		"node": ">=20"
+	},
+	"peerDependencies": {
+		"@commertize/market": "0.1.0"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"prepack": "npm run build"
+	}
+}
