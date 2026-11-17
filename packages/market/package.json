@@ -1,0 +1,48 @@
+{
+	"name": "@commertize/market",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Search and pay x402 services listed on Commertize, from your own wallet.",
+	"keywords": ["x402", "agents", "search", "payments", "mcp"],
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Commertize-Inc/agent-kit.git",
+		"directory": "packages/market"
+	},
+	"homepage": "https://github.com/Commertize-Inc/agent-kit/tree/main/packages/market#readme",
+	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		".": {
+			"source": "./src/index.ts",
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		},
+		"./pay": {
+			"source": "./src/pay.ts",
+			"types": "./dist/pay.d.ts",
+			"default": "./dist/pay.js"
+		}
+	},
+	"files": ["dist", "README.md", "LICENSE", "NOTICE"],
+	"engines": {
+		"node": ">=20"
+	},
+	"peerDependencies": {
+		"x402": "0.7.3"
+	},
+	"peerDependenciesMeta": {
+		"x402": {
+			"optional": true
+		}
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"prepack": "npm run build"
+	}
+}

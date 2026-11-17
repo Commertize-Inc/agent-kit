@@ -1,0 +1,79 @@
+# Release workflow for @commertize/market. DRAFT, INERT.
+#
+# Nothing here can publish today:
+#  1. The job runs only when the repository variable MARKET_RELEASE_ENABLED is "true" (unset now).
+#  2. packages/market/package.json is "private": true; npm refuses to publish it.
+#  3. The job uses the "npm-publish" environment, which must have a required reviewer.
+#  4. No token or secret is referenced. Publishing uses npm trusted publishing (OIDC),
+#     which works only after a trusted publisher is configured for this package on npmjs.com.
+#
+# Trigger: a tag named market-v<version> whose version equals packages/market/package.json.
+name: Release @commertize/market
+
+on:
+  push:
+    tags: ["market-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-market
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    if: vars.MARKET_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.14.0"
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing needs npm CLI 11.5.1 or later.
+      - name: npm CLI for trusted publishing
+        run: npm install -g --ignore-scripts npm@11.5.1
+
+      - name: Install (frozen lockfile, no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Tag matches package version
+        run: |
+          want="market-v$(node -p "require('./packages/market/package.json').version")"
+          test "$GITHUB_REF_NAME" = "$want" || { echo "tag $GITHUB_REF_NAME does not match $want"; exit 1; }
+
+      - name: Wording guard
+        run: node scripts/check-wording.mjs
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build --workspace @commertize/market
+
+      - name: Pack (no lifecycle scripts) and refuse install scripts
+        working-directory: packages/market
+        run: |
+          node -e "const s=require('./package.json').scripts||{};for(const k of ['preinstall','install','postinstall','prepare'])if(s[k]){console.error('install script: '+k);process.exit(1)}"
+          npm pack --ignore-scripts
+          sha256sum commertize-market-*.tgz | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish with provenance
+        working-directory: packages/market
+        run: npm publish ./commertize-market-*.tgz --provenance --access public --ignore-scripts
