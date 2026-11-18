@@ -136,7 +136,8 @@ test("a 402 naming a different network than the configured one is refused before
 	);
 	assert.equal(s.signed.length, 0);
 	// Control: an extra other-network option beside a matching one is ignored; only the configured network is signed.
-	const ff3 = seller([accepts({ network: "base", asset: USDC_BASE }), accepts()]);
+	// The other-network option differs only in network and is listed first.
+	const ff3 = seller([accepts({ network: "base" }), accepts()]);
 	await payEndpoint({ endpoint: endpointEntry(), wallet: WALLET, limit: limit(), fetch: ff3.fetch, createPaymentHeader: s.createPaymentHeader });
 	assert.deepEqual(s.signed.map((x) => x.network), ["base-sepolia"]);
 });
