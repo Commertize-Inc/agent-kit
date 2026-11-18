@@ -19,11 +19,35 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_ORIGIN, MARKET_API_PATH } from "../src/index.ts";
 
 const BIN_SRC = fileURLToPath(new URL("../bin/install.mjs", import.meta.url));
 const SKILL = "---\nname: test-skill\n---\nfixture body\n";
 const NAME = "commertize-agentic-markets";
-const URL_DEFAULT = "https://commertize.com/api/market/v1/mcp";
+const URL_DEFAULT = DEFAULT_ORIGIN + MARKET_API_PATH + "/mcp";
+
+test("installer and client share one origin and API path", async () => {
+	const bin = await import("../bin/install.mjs");
+	assert.equal(bin.MARKET_API_PATH, MARKET_API_PATH);
+	assert.equal(bin.DEFAULT_ORIGIN, DEFAULT_ORIGIN);
+	assert.equal(bin.DEFAULT_MCP_URL, URL_DEFAULT);
+});
+
+test("the API path literal appears only at its two definitions in the package", () => {
+	const root = fileURLToPath(new URL("..", import.meta.url));
+	const hits: string[] = [];
+	const walk = (d: string) => {
+		for (const f of readdirSync(d, { withFileTypes: true })) {
+			if (f.name === "node_modules" || f.name === "dist") continue;
+			const p = join(d, f.name);
+			if (f.isDirectory()) walk(p);
+			else if (/\.(ts|mjs|js|json|md)$/.test(f.name))
+				readFileSync(p, "utf8").split("\n").forEach((l, i) => { if (l.includes(MARKET_API_PATH)) hits.push(`${p.slice(root.length)}:${i + 1}`); });
+		}
+	};
+	walk(root);
+	assert.deepEqual(hits.map((h) => h.replace(/:\d+$/, "")).sort(), ["bin/install.mjs", "src/index.ts"]);
+});
 
 /** A throwaway package layout: <pkg>/bin/install.mjs (+ optional skill), reached via <pkg>/.bin/commertize-market. */
 function pkg(withSkill = true) {
@@ -124,7 +148,7 @@ test("control for the missing-skill refusal: --mcp-only writes only the MCP entr
 });
 
 test("control for the URL refusals: localhost http and a custom https URL are accepted", () => {
-	for (const u of ["http://localhost/api/market/v1/mcp", "https://preview.commertize.example/api/market/v1/mcp"]) {
+	for (const u of ["http://localhost" + MARKET_API_PATH + "/mcp", "https://preview.commertize.example" + MARKET_API_PATH + "/mcp"]) {
 		const { bin, proj } = pkg();
 		assert.equal(run(bin, ["install", "--dir", proj, "--url", u]).code, 0);
 		assert.equal(JSON.parse(readFileSync(join(proj, ".mcp.json"), "utf8")).mcpServers[NAME].url, u);
