@@ -3,13 +3,13 @@
 	"private": true,
 	"license": "Apache-2.0",
 	"type": "module",
-	"workspaces": ["packages/cli"],
+	"workspaces": ["packages/cli", "packages/market"],
 	"engines": {
 		"node": ">=22.6"
 	},
 	"scripts": {
-		"test": "node --conditions=source --experimental-strip-types --test packages/cli/test/*.test.ts",
-		"typecheck": "tsc -p packages/cli/tsconfig.json --noEmit && tsc -p tsconfig.templates.json",
+		"test": "node --conditions=source --experimental-strip-types --test packages/cli/test/*.test.ts packages/market/test/*.test.ts",
+		"typecheck": "tsc -p packages/cli/tsconfig.json --noEmit && tsc -p tsconfig.templates.json && tsc -p packages/market/tsconfig.json --noEmit",
 		"build": "npm run build --workspace @commertize/agent-kit",
 		"check:wording": "node scripts/check-wording.mjs"
 	},
