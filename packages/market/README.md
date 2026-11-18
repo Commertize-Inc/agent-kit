@@ -40,10 +40,6 @@ import { createSpendingLimit, payEndpoint } from "@commertize/market/pay";
 
 const limit = createSpendingLimit({ network: "base-sepolia", asset: endpoint.price.asset_address, perCall: "10000", total: "50000" });
 const res = await payEndpoint({ endpoint, wallet: yourSignerObject, limit });
-if (res.receiptId) {
-	const receipt = await market.getReceipt(res.receiptId);
-	receipt.matches({ amount: res.amountAtomic, payee: res.payTo, endpoint: endpoint.endpoint_id });
-}
 ```
 
 Amounts are integers in the asset's smallest unit. The default network is Base Sepolia. Base mainnet is refused unless you pass both `network: "base"` and `allowMainnet: true`.

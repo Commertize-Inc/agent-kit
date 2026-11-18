@@ -32,7 +32,7 @@ export const SERVER_NAME = "commertize-agentic-markets";
 // Same values as DEFAULT_ORIGIN / MARKET_API_PATH in src/index.ts (this bin
 // runs on plain Node and cannot import the TypeScript source); test/install.test.ts
 // pins them equal. The served path is not settled yet: change both together.
-export const DEFAULT_ORIGIN = "https://commertize.com";
+export const DEFAULT_ORIGIN = "https://api.commertize.com";
 export const MARKET_API_PATH = "/api/market/v1";
 export const DEFAULT_MCP_URL = DEFAULT_ORIGIN + MARKET_API_PATH + "/mcp";
 export const SKILL_REL = join("skills", "commertize-market", "SKILL.md");

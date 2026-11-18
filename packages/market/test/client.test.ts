@@ -2,13 +2,17 @@
 // Copyright 2026 Commertize, Inc.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHAIN_IDS, DEFAULT_BASE_URL, DEFAULT_NETWORK, DEFAULT_ORIGIN, MARKET_API_PATH, MarketApiError, MarketConfigError, createMarketClient, receiptMatches } from "../src/index.ts";
+import { CHAIN_IDS, DEFAULT_BASE_URL, DEFAULT_NETWORK, DEFAULT_ORIGIN, MARKET_API_PATH, MarketApiError, MarketConfigError, TRANSFER_ONLY_LABEL, createMarketClient } from "../src/index.ts";
+import * as market from "../src/index.ts";
 import { BASE, PAY_TO, fakeFetch, json, service } from "./helpers.ts";
 
 test("default base URL is DEFAULT_ORIGIN + MARKET_API_PATH; http refused except localhost; no query or credentials", () => {
 	const noop = async () => json({});
 	assert.equal(createMarketClient({ fetch: noop }).baseUrl, DEFAULT_BASE_URL);
 	assert.equal(DEFAULT_BASE_URL, DEFAULT_ORIGIN + MARKET_API_PATH);
+	// the API host; the site host commertize.com serves no /api route (AXIOM F-1)
+	assert.equal(DEFAULT_ORIGIN, "https://api.commertize.com");
+	assert.equal(DEFAULT_BASE_URL, "https://api.commertize.com" + MARKET_API_PATH);
 	assert.equal(BASE, "https://market.example.test" + MARKET_API_PATH);
 	const loop = ["http:", "", "localhost"].join("/") + MARKET_API_PATH;
 	assert.equal(createMarketClient({ fetch: noop, baseUrl: loop + "/" }).baseUrl, loop);
@@ -22,13 +26,16 @@ test("search defaults to Base Sepolia (84532) and sends the v2.1 param names", a
 	const ff = fakeFetch({ [`${BASE}/services`]: () => json({ results: [service()], next_cursor: null }) });
 	const c = createMarketClient({ baseUrl: BASE, fetch: ff.fetch });
 	assert.equal(c.allowMainnet, false);
-	const r = await c.search({ q: "weather", checksPassed: true, maxPriceUsd: "0.05", entryState: "claimed", hasReceipts: true, limit: 5 });
+	const r = await c.search({ q: "weather", category: "data", checksPassed: true, maxPriceUsd: "0.05", sort: "price_asc", limit: 5, cursor: "o10" });
 	const u = new URL(ff.calls[0]!.url);
 	assert.equal(u.searchParams.get("network"), "base-sepolia");
 	assert.equal(u.searchParams.get("checks_passed"), "true");
 	assert.equal(u.searchParams.get("max_price_usd"), "0.05");
-	assert.equal(u.searchParams.get("entry_state"), "claimed");
-	assert.equal(u.searchParams.get("has_receipts"), "true");
+	// only the API's accepted names, each once (the API 400s unknown or repeated ones)
+	const accepted = ["q", "category", "network", "max_price_usd", "checks_passed", "sort", "limit", "cursor"];
+	const names = [...u.searchParams.keys()];
+	assert.deepEqual([...names].sort(), [...accepted].sort());
+	assert.equal(new Set(names).size, names.length);
 	assert.equal(u.searchParams.get("verified"), null);
 	assert.equal(r.network, "base-sepolia");
 	assert.equal(r.results.length, 1);
@@ -58,6 +65,16 @@ test("search on Base mainnet is refused before any request unless the client has
 	assert.equal(ff.calls.length, 2);
 });
 
+test("options the API does not accept are never sent (has_receipts, entry_state)", async () => {
+	const ff = fakeFetch({ [`${BASE}/services`]: () => json({ results: [], next_cursor: null }) });
+	const c = createMarketClient({ baseUrl: BASE, fetch: ff.fetch });
+	await c.search({ q: "x", hasReceipts: true, entryState: "claimed" } as never);
+	const u = new URL(ff.calls[0]!.url);
+	assert.equal(u.searchParams.get("has_receipts"), null);
+	assert.equal(u.searchParams.get("entry_state"), null);
+	assert.deepEqual([...u.searchParams.keys()].sort(), ["network", "q"]);
+});
+
 test("search refuses bad params before any request", async () => {
 	const ff = fakeFetch({});
 	const c = createMarketClient({ baseUrl: BASE, fetch: ff.fetch });
@@ -65,12 +82,13 @@ test("search refuses bad params before any request", async () => {
 	await assert.rejects(c.search({ maxPriceUsd: "1e3" }), MarketConfigError);
 	await assert.rejects(c.search({ limit: 51 }), MarketConfigError);
 	await assert.rejects(c.search({ limit: 0 }), MarketConfigError);
-	await assert.rejects(c.search({ entryState: "x" as never }), MarketConfigError);
 	await assert.rejects(c.search({ sort: "receipted_calls_30d_desc" as never }), MarketConfigError);
+	await assert.rejects(c.search({ sort: "relevance" as never }), MarketConfigError);
+	await assert.rejects(c.search({ category: ["data", "search"] as never }), MarketConfigError);
 	assert.equal(ff.calls.length, 0);
 });
 
-test("get_service / get_endpoint / get_receipt: ids are validated and the echoed id must match", async () => {
+test("get_service / get_endpoint: ids are validated and the echoed id must match", async () => {
 	const ff = fakeFetch({
 		[`${BASE}/services/svc_1`]: () => json(service()),
 		[`${BASE}/services/svc_x`]: () => json(service()),
@@ -90,15 +108,10 @@ test("API errors surface the one error shape", async () => {
 	await assert.rejects(c.getService("svc_1"), (e: unknown) => e instanceof MarketApiError && e.status === 404 && e.code === "not_found" && e.param === "service_id");
 });
 
-test("receipt matches(): amount, payee and endpoint must all equal; integers only", async () => {
-	const rec = { receipt_id: "rc_1", endpoint_id: "ep_1", pay_to: PAY_TO, amount_atomic: "10000", network: "base-sepolia" };
-	const ff = fakeFetch({ [`${BASE}/receipts/rc_1`]: () => json(rec) });
-	const r = await createMarketClient({ baseUrl: BASE, fetch: ff.fetch }).getReceipt("rc_1");
-	assert.equal(r.matches({ amount: "10000", payee: PAY_TO.toUpperCase().replace("0X", "0x"), endpoint: "ep_1" }), true);
-	assert.equal(r.matches({ amount: 10000n, payee: PAY_TO, endpoint: "ep_1" }), true);
-	assert.equal(r.matches({ amount: "10001", payee: PAY_TO, endpoint: "ep_1" }), false);
-	assert.equal(r.matches({ amount: "10000", payee: "0x" + "b".repeat(40), endpoint: "ep_1" }), false);
-	assert.equal(r.matches({ amount: "10000", payee: PAY_TO, endpoint: "ep_2" }), false);
-	assert.equal(r.matches({ amount: "0.01" as never, payee: PAY_TO, endpoint: "ep_1" }), false);
-	assert.equal(receiptMatches({ ...rec, amount_atomic: "1e4" }, { amount: "10000", payee: PAY_TO, endpoint: "ep_1" }), false);
+test("no receipt call or receipt match is exported; the transfer-only label is AXIOM's bytes", () => {
+	// /receipts/{id} is not served on the market path and would not carry
+	// amount, payee or endpoint (AEGIS design D); the old match is gone.
+	for (const k of ["receiptMatches", "get_receipt"]) assert.equal(k in market, false, k);
+	assert.equal("getReceipt" in createMarketClient({ fetch: async () => json({}) }), false);
+	assert.equal(TRANSFER_ONLY_LABEL, "transfer found on-chain, no receipt binding");
 });
