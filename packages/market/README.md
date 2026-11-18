@@ -48,6 +48,26 @@ if (res.receiptId) {
 
 Amounts are integers in the asset's smallest unit. Base Sepolia is used only when you pass `network: "base-sepolia"`.
 
+## Install into an agent project (draft)
+
+<!-- I-1..I-6 DRAFT, NOT CLEARED -->
+One command adds Commertize Agentic Markets to your agent project:
+
+```sh
+npx @commertize/market install
+```
+
+It writes two files inside the current directory and nowhere else:
+
+- `.mcp.json`: adds one MCP server entry named `commertize-agentic-markets`. Other entries are kept.
+- `skills/commertize-market/SKILL.md`: the skill file shipped in this package.
+
+Options: `--dir <path>` to install into another project, `--url <mcp-url>` to point at another server (https only; plain http only for localhost), `--mcp-only` to add the MCP entry alone, `--dry-run` to see what it would write.
+
+It changes nothing and exits with code 2 if an existing entry or skill file differs, if `.mcp.json` is not valid JSON, or if a target is a symlink. It makes no network request, reads no environment variables, and never asks for a key or an account.
+
+If your client keeps MCP servers or skills somewhere else, copy the same entry and file there.
+
 ## Licence
 
 Apache-2.0.

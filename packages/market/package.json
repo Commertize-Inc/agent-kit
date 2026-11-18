@@ -25,7 +25,10 @@
 			"default": "./dist/pay.js"
 		}
 	},
-	"files": ["dist", "README.md", "LICENSE", "NOTICE"],
+	"bin": {
+		"commertize-market": "bin/install.mjs"
+	},
+	"files": ["dist", "bin", "skill", "README.md", "LICENSE", "NOTICE"],
 	"engines": {
 		"node": ">=20"
 	},
