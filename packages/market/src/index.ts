@@ -2,15 +2,31 @@
 // Copyright 2026 Commertize, Inc.
 //
 // DRAFT, NOT FOR RELEASE. Read-only client for the Commertize marketplace
-// API (/api/market/v1). No runtime dependencies, no environment reads, no
+// API (path: MARKET_API_PATH). No runtime dependencies, no environment reads, no
 // telemetry: every setting is an argument.
 
 export const VERSION = "0.1.0";
-export const DEFAULT_BASE_URL = "https://commertize.com/api/market/v1";
+export const DEFAULT_ORIGIN = "https://commertize.com";
+/**
+ * The one place this package names the marketplace API path. Every URL the
+ * client builds starts from it; bin/install.mjs carries the same value and a
+ * test pins the two together. The served path is not settled yet: change it
+ * here (and there) only.
+ */
+export const MARKET_API_PATH = "/api/market/v1";
+export const DEFAULT_BASE_URL = DEFAULT_ORIGIN + MARKET_API_PATH;
 
 export type Network = "base" | "base-sepolia";
 export const NETWORKS: readonly Network[] = ["base", "base-sepolia"];
 export const CHAIN_IDS: Readonly<Record<Network, number>> = { base: 8453, "base-sepolia": 84532 };
+/** Base Sepolia (chain id 84532). Base mainnet is used only with allowMainnet: true. */
+export const DEFAULT_NETWORK: Network = "base-sepolia";
+export const MAINNET: Network = "base";
+
+/** Testnet always; mainnet only when allowMainnet is exactly true. */
+export function networkAllowed(network: Network, allowMainnet: unknown): boolean {
+	return network !== MAINNET || allowMainnet === true;
+}
 
 export type EntryState = "claimed" | "unclaimed";
 export type ListingCheckStatus = "passed" | "failed" | "pending" | "stale" | "not_applicable";
@@ -112,7 +128,7 @@ export interface ReceiptResult extends Receipt {
 export interface SearchOptions {
 	q?: string;
 	category?: string | string[];
-	/** Defaults to "base" (mainnet). Base Sepolia only when asked for. */
+	/** Defaults to "base-sepolia" (DEFAULT_NETWORK). "base" (mainnet) is refused unless the client has allowMainnet: true. */
 	network?: Network;
 	maxPriceUsd?: string | number;
 	checksPassed?: boolean;
@@ -139,6 +155,8 @@ export interface ClientOptions {
 	baseUrl?: string;
 	/** Defaults to the global fetch. */
 	fetch?: FetchLike;
+	/** Must be exactly true before any call may name Base mainnet ("base"). Default false. */
+	allowMainnet?: boolean;
 }
 
 export class MarketConfigError extends Error {
@@ -209,6 +227,7 @@ export function receiptMatches(r: Receipt, expected: ReceiptExpectation): boolea
 
 export class MarketClient {
 	readonly baseUrl: string;
+	readonly allowMainnet: boolean;
 	private readonly fetchImpl: FetchLike;
 
 	constructor(opts: ClientOptions = {}) {
@@ -216,6 +235,7 @@ export class MarketClient {
 		const f = opts.fetch ?? (globalThis.fetch as FetchLike | undefined);
 		if (typeof f !== "function") throw new MarketConfigError("no fetch available; pass options.fetch");
 		this.fetchImpl = f;
+		this.allowMainnet = opts.allowMainnet === true;
 	}
 
 	private async get(path: string): Promise<unknown> {
@@ -244,8 +264,9 @@ export class MarketClient {
 	}
 
 	async search(opts: SearchOptions = {}): Promise<SearchResult> {
-		const network = opts.network ?? "base";
+		const network = opts.network ?? DEFAULT_NETWORK;
 		if (!isNetwork(network)) throw new MarketConfigError('network must be "base" or "base-sepolia"');
+		if (!networkAllowed(network, this.allowMainnet)) throw new MarketConfigError("Base mainnet is refused unless the client is created with allowMainnet: true");
 		const p = new URLSearchParams();
 		if (opts.q !== undefined) p.set("q", String(opts.q));
 		for (const c of opts.category === undefined ? [] : ([] as string[]).concat(opts.category)) p.append("category", c);

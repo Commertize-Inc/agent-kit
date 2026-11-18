@@ -7,7 +7,7 @@
 // x402 client (peer dependency "x402", exact version in package.json) is
 // loaded only when a payment is actually signed.
 
-import { CHAIN_IDS, VERSION, isNetwork, toAtomic, type Endpoint, type FetchLike, type Network } from "./index.ts";
+import { CHAIN_IDS, DEFAULT_NETWORK, VERSION, isNetwork, networkAllowed, toAtomic, type Endpoint, type FetchLike, type Network } from "./index.ts";
 
 export class PayRefusedError extends Error {
 	reason: string;
@@ -109,8 +109,10 @@ export interface PayOptions {
 	wallet: object;
 	/** Required. Create with createSpendingLimit(); reuse it across calls to cap the total. */
 	limit: SpendingLimit;
-	/** Defaults to "base". Set "base-sepolia" to pay on the testnet. */
+	/** Defaults to "base-sepolia" (DEFAULT_NETWORK). "base" (mainnet, real funds) is refused unless allowMainnet is exactly true. */
 	network?: Network;
+	/** Must be exactly true to pay on Base mainnet. Default false. */
+	allowMainnet?: boolean;
 	/** Request body for POST endpoints. */
 	body?: string;
 	headers?: Record<string, string>;
@@ -156,8 +158,9 @@ export async function payEndpoint(opts: PayOptions): Promise<PayResult> {
 	const limit = opts.limit;
 	if (!isLimit(limit)) throw new PayRefusedError("limit_missing", "a spending limit from createSpendingLimit() is required");
 	assertWalletObject(opts.wallet);
-	const network = opts.network ?? "base";
+	const network = opts.network ?? DEFAULT_NETWORK;
 	if (!isNetwork(network)) throw new PayRefusedError("network_invalid", 'network must be "base" or "base-sepolia"');
+	if (!networkAllowed(network, opts.allowMainnet)) throw new PayRefusedError("mainnet_not_allowed", "Base mainnet payments are refused unless allowMainnet: true is set");
 	const ep = opts.endpoint;
 	if (!ep || typeof ep !== "object") throw new PayRefusedError("endpoint_missing", "pass the entry from getEndpoint()");
 	if (ep.network !== network || ep.chain_id !== CHAIN_IDS[network])
@@ -196,7 +199,11 @@ export async function payEndpoint(opts: PayOptions): Promise<PayResult> {
 	if (live?.x402Version !== 1) throw new PayRefusedError("live_version", "only x402 version 1 payment requests are supported");
 	if (!Array.isArray(live.accepts) || live.accepts.length === 0) throw new PayRefusedError("live_unreadable", "the 402 lists no payment options");
 
-	// 2. Pay only an option that equals the entry on payee, asset, network and amount.
+	// 2. A 402 offering nothing on the configured network is refused outright.
+	if (!(live.accepts as PaymentRequirements[]).some((a) => a && a.network === network))
+		throw new PayRefusedError("live_network", `the live payment request names no option on ${network}; not paying`);
+
+	// 3. Pay only an option that equals the entry on payee, asset, network and amount.
 	const req = (live.accepts as PaymentRequirements[]).find(
 		(a) =>
 			a &&
@@ -211,12 +218,12 @@ export async function payEndpoint(opts: PayOptions): Promise<PayResult> {
 	);
 	if (!req) throw new PayRefusedError("live_mismatch", "the live payment request differs from the entry (payee, asset, network, amount or resource); not paying");
 
-	// 3. Spending limit, counted before signing (a failed retry still counts).
+	// 4. Spending limit, counted before signing (a failed retry still counts).
 	if (entryAmount > limit.perCall) throw new PayRefusedError("over_per_call", "amount is above the per-call limit");
 	if (limit.spent + entryAmount > limit.total) throw new PayRefusedError("over_total", "amount would exceed the total limit");
 	limit.spent += entryAmount;
 
-	// 4. Sign with the caller's wallet and retry once.
+	// 5. Sign with the caller's wallet and retry once.
 	const sign = opts.createPaymentHeader ?? defaultCreatePaymentHeader;
 	const header = await sign(opts.wallet, 1, req);
 	const paid = await f(target.toString(), init({ "x-payment": header }));
