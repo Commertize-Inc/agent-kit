@@ -6,7 +6,8 @@
 // telemetry: every setting is an argument.
 
 export const VERSION = "0.1.0";
-export const DEFAULT_ORIGIN = "https://commertize.com";
+/** The API host. commertize.com (the site) serves no /api route. */
+export const DEFAULT_ORIGIN = "https://api.commertize.com";
 /**
  * The one place this package names the marketplace API path. Every URL the
  * client builds starts from it; bin/install.mjs carries the same value and a
@@ -100,41 +101,35 @@ export interface Endpoint {
 	testnet?: true;
 }
 
-/** Receipt shape is provisional until the API is live. */
-export interface Receipt {
-	receipt_id: string;
-	endpoint_id: string;
-	pay_to: string;
-	amount_atomic: string;
-	asset_address?: string;
+/**
+ * Payment check result, AEGIS design D (interface only: nothing in this
+ * package produces it yet). Without a Commertize receipt envelope the only
+ * true statement is TRANSFER_ONLY_LABEL (AXIOM bytes, 2026-11-18): the
+ * transfer happened, not which request it paid for. The envelope-bound form
+ * is added only when the envelope, the published keys and the receipts
+ * route are served.
+ */
+export const TRANSFER_ONLY_LABEL = "transfer found on-chain, no receipt binding";
+export interface TransferOnlyCheck {
+	binding: "none";
+	label: typeof TRANSFER_ONLY_LABEL;
 	network: Network;
-	tx_hash?: string;
-	settled_at?: string;
-	[k: string]: unknown;
-}
-
-export interface ReceiptExpectation {
-	/** Amount in the asset's smallest unit, as an integer string or bigint. */
-	amount: string | bigint;
+	tx_hash: string;
 	payee: string;
-	endpoint: string;
+	/** Smallest unit of the asset, integer string. */
+	amount_atomic: string;
 }
-
-export interface ReceiptResult extends Receipt {
-	/** True only if amount, payee and endpoint id all equal what you expected. */
-	matches(expected: ReceiptExpectation): boolean;
-}
+export type PaymentCheck = TransferOnlyCheck;
 
 export interface SearchOptions {
 	q?: string;
-	category?: string | string[];
+	/** One category; the API refuses a repeated parameter. */
+	category?: string;
 	/** Defaults to "base-sepolia" (DEFAULT_NETWORK). "base" (mainnet) is refused unless the client has allowMainnet: true. */
 	network?: Network;
 	maxPriceUsd?: string | number;
 	checksPassed?: boolean;
-	entryState?: EntryState | "any";
-	hasReceipts?: boolean;
-	sort?: "relevance" | "price_asc" | "last_checked_desc" | "newest";
+	sort?: "newest" | "price_asc" | "last_checked_desc";
 	limit?: number;
 	cursor?: string;
 }
@@ -206,23 +201,11 @@ function checkId(kind: string, id: unknown): string {
 	return id;
 }
 
-function sameAddress(a: unknown, b: unknown): boolean {
-	return typeof a === "string" && typeof b === "string" && /^0x[0-9a-fA-F]{40}$/.test(a) && a.toLowerCase() === b.toLowerCase();
-}
-
 /** Parses a non-negative integer string or bigint; never accepts a float. */
 export function toAtomic(v: unknown): bigint | null {
 	if (typeof v === "bigint") return v >= 0n ? v : null;
 	if (typeof v === "string" && /^\d{1,78}$/.test(v)) return BigInt(v);
 	return null;
-}
-
-export function receiptMatches(r: Receipt, expected: ReceiptExpectation): boolean {
-	const want = toAtomic(expected.amount);
-	const got = toAtomic(r.amount_atomic);
-	if (want === null || got === null || want !== got) return false;
-	if (!sameAddress(r.pay_to, expected.payee)) return false;
-	return typeof r.endpoint_id === "string" && r.endpoint_id === expected.endpoint;
 }
 
 export class MarketClient {
@@ -269,7 +252,12 @@ export class MarketClient {
 		if (!networkAllowed(network, this.allowMainnet)) throw new MarketConfigError("Base mainnet is refused unless the client is created with allowMainnet: true");
 		const p = new URLSearchParams();
 		if (opts.q !== undefined) p.set("q", String(opts.q));
-		for (const c of opts.category === undefined ? [] : ([] as string[]).concat(opts.category)) p.append("category", c);
+		// Only parameters the API accepts, each at most once: it answers 400 to
+		// an unknown or repeated one (AEGIS M-1).
+		if (opts.category !== undefined) {
+			if (typeof opts.category !== "string") throw new MarketConfigError("category must be one string");
+			p.set("category", opts.category);
+		}
 		p.set("network", network);
 		if (opts.maxPriceUsd !== undefined) {
 			const s = String(opts.maxPriceUsd);
@@ -277,13 +265,8 @@ export class MarketClient {
 			p.set("max_price_usd", s);
 		}
 		if (opts.checksPassed) p.set("checks_passed", "true");
-		if (opts.entryState !== undefined) {
-			if (!["claimed", "unclaimed", "any"].includes(opts.entryState)) throw new MarketConfigError("entryState is not valid");
-			p.set("entry_state", opts.entryState);
-		}
-		if (opts.hasReceipts) p.set("has_receipts", "true");
 		if (opts.sort !== undefined) {
-			if (!["relevance", "price_asc", "last_checked_desc", "newest"].includes(opts.sort)) throw new MarketConfigError("sort is not valid");
+			if (!["newest", "price_asc", "last_checked_desc"].includes(opts.sort)) throw new MarketConfigError("sort is not valid");
 			p.set("sort", opts.sort);
 		}
 		if (opts.limit !== undefined) {
@@ -317,12 +300,6 @@ export class MarketClient {
 		if (e.endpoint_id !== endpointId) throw new MarketApiError(200, "bad_response", "endpoint_id differs from the one asked for");
 		return e.network === "base-sepolia" ? { ...e, testnet: true } : e;
 	}
-
-	async getReceipt(receiptId: string): Promise<ReceiptResult> {
-		const r = (await this.get(`/receipts/${encodeURIComponent(checkId("receiptId", receiptId))}`)) as Receipt;
-		if (r.receipt_id !== receiptId) throw new MarketApiError(200, "bad_response", "receipt_id differs from the one asked for");
-		return { ...r, matches: (expected: ReceiptExpectation) => receiptMatches(r, expected) };
-	}
 }
 
 export function createMarketClient(opts: ClientOptions = {}): MarketClient {
@@ -333,4 +310,3 @@ export function createMarketClient(opts: ClientOptions = {}): MarketClient {
 export const search = (opts?: SearchOptions, client: ClientOptions = {}) => createMarketClient(client).search(opts);
 export const get_service = (id: string, client: ClientOptions = {}) => createMarketClient(client).getService(id);
 export const get_endpoint = (id: string, client: ClientOptions = {}) => createMarketClient(client).getEndpoint(id);
-export const get_receipt = (id: string, client: ClientOptions = {}) => createMarketClient(client).getReceipt(id);
