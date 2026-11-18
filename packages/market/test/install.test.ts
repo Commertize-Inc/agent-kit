@@ -46,15 +46,7 @@ test("the API path literal appears only at its two definitions in the package", 
 		}
 	};
 	walk(root);
-	// skill/SKILL.md is the phrased skill r2 (hash-pinned in skill.test.ts); its three
-	// literal URLs are part of those bytes, so a path change also means a skill r3.
-	assert.deepEqual(hits.map((h) => h.replace(/:\d+$/, "")).sort(), [
-		"bin/install.mjs",
-		"skill/SKILL.md",
-		"skill/SKILL.md",
-		"skill/SKILL.md",
-		"src/index.ts",
-	]);
+	assert.deepEqual(hits.map((h) => h.replace(/:\d+$/, "")).sort(), ["bin/install.mjs", "src/index.ts"]);
 });
 
 /** A throwaway package layout: <pkg>/bin/install.mjs (+ optional skill), reached via <pkg>/.bin/commertize-market. */
